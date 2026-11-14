@@ -1,13 +1,34 @@
 {
-  "platforms": ["youtube", "instagram", "tiktok"],
+  "platforms": [
+    "youtube",
+    "instagram",
+    "tiktok"
+  ],
   "language": "ar",
   "niche": "",
   "brand_voice": "",
-  "default_hashtags": ["#explore", "#fyp", "#reels", "#shorts"],
+  "default_hashtags": [
+    "#explore",
+    "#fyp",
+    "#reels",
+    "#shorts"
+  ],
   "max_seconds": 180,
   "youtube_privacy": "public",
   "tiktok_privacy": "PUBLIC_TO_EVERYONE",
   "watch_interval_seconds": 30,
+  "min_minutes_between_posts": 90,
+  "clipper": {
+    "count": 6,
+    "min_seconds": 30,
+    "max_seconds": 80,
+    "whisper_model": "small",
+    "language": null,
+    "captions": true,
+    "caption_font": "Arial",
+    "layout": "auto",
+    "max_height": 1080
+  },
   "momentum": {
     "enabled": true,
     "check_every_minutes": 30,

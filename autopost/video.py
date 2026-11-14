@@ -101,12 +101,9 @@ def frames_b64(path, count=4, width=512):
     return out
 
 
-def boost_window(source_duration, clip_seconds, index):
-    """Start time of the index-th follow-up cut, or None when the source is too
-    short to yield a clip that isn't just the original again."""
-    if source_duration < clip_seconds * 1.5:
-        return None
-    windows = int(source_duration // clip_seconds)
-    # Start from the end of the source: the first post already led with the opening.
-    slot = windows - 1 - (index % windows)
-    return slot * clip_seconds
+def boost_window(source_duration, posted_seconds, clip_seconds, index):
+    """Start time of the index-th follow-up cut. Follow-ups only come from footage
+    that was trimmed off the original post; None when there is none left, because
+    re-posting a piece of what is already up is duplicate content."""
+    start = posted_seconds + index * clip_seconds
+    return start if source_duration - start >= min(clip_seconds, 15) else None

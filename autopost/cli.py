@@ -34,13 +34,26 @@ def cmd_watch(args, cfg):
     for d in (inbox, done, failed):
         d.mkdir(exist_ok=True)
     db = store.connect()
-    seen, last_check = {}, 0.0
+    seen, last_check, release = {}, 0.0, False
     m = cfg["momentum"]
+    gap = cfg["min_minutes_between_posts"] * 60
+    row = db.execute("SELECT MAX(p.published_at) t FROM posts p JOIN videos v"
+                     " ON v.id = p.video_id WHERE p.error IS NULL"
+                     " AND v.parent_id IS NULL").fetchone()
+    last_post = row["t"] or 0.0
     log.info("Watching %s (drop videos here). Ctrl+C to stop.", inbox)
     while True:
-        for path in sorted(inbox.iterdir()):
-            if path.suffix.lower() not in VIDEO_EXT or not _stable(path, seen):
-                continue
+        ready = [p for p in sorted(inbox.iterdir())
+                 if p.suffix.lower() in VIDEO_EXT and _stable(p, seen)]
+        wait = gap - (time.time() - last_post)
+        if ready and wait > 0 and not release:
+            if seen.get("logged") != len(ready):
+                log.info("%d video(s) queued; next post in %.0f min", len(ready), wait / 60)
+                seen["logged"] = len(ready)
+            ready = []
+        # One per pass: posts are spaced out, not dumped all at once.
+        for path in ready[:1]:
+            release = False
             # An optional "<name>.txt" beside the video is the creator's note.
             note_file = path.with_suffix(".txt")
             note = note_file.read_text(encoding="utf-8").strip() if note_file.exists() else ""
@@ -56,16 +69,35 @@ def cmd_watch(args, cfg):
                 target = failed
             if target is failed:
                 shutil.move(kept, failed / kept.name)
+            else:
+                last_post = time.time()
             if note_file.exists():
                 shutil.move(note_file, target / note_file.name)
             seen.pop(path, None)
         if m["enabled"] and time.time() - last_check >= m["check_every_minutes"] * 60:
             last_check = time.time()
             try:
-                momentum.check(cfg, db)
+                queued = any(p.suffix.lower() in VIDEO_EXT for p in inbox.iterdir())
+                if momentum.check(cfg, db, cut=not queued) and queued:
+                    release = True
             except Exception as e:
                 log.error("momentum check: %s", e)
         time.sleep(cfg["watch_interval_seconds"])
+
+
+def cmd_clip(args, cfg):
+    from . import clipper
+    clips = clipper.run(args.url, cfg, count=args.count, start=args.start, end=args.end,
+                        queue=not args.no_queue)
+    print(f"{len(clips)} clip(s) ready:")
+    for c in clips:
+        print(f"  {c}")
+    if args.no_queue:
+        return
+    if args.watch:
+        cmd_watch(args, cfg)
+    else:
+        print("Queued in inbox/. `python -m autopost watch` publishes them.")
 
 
 def cmd_momentum(args, cfg):
@@ -110,6 +142,15 @@ def main():
     p.add_argument("--platforms", nargs="+", choices=["youtube", "instagram", "tiktok"])
     p.add_argument("--dry-run", action="store_true", help="edit + caption, upload nothing")
     p.set_defaults(fn=cmd_publish)
+
+    p = sub.add_parser("clip", help="cut the best 30-80s moments out of a YouTube/Twitch link")
+    p.add_argument("url", help="YouTube or Twitch link, or a local video file")
+    p.add_argument("--count", type=int, help="how many clips to make")
+    p.add_argument("--start", help="only use the video from this time (e.g. 1:30:00)")
+    p.add_argument("--end", help="only use the video up to this time")
+    p.add_argument("--no-queue", action="store_true", help="make the clips but don't publish")
+    p.add_argument("--watch", action="store_true", help="then stay running and publish them")
+    p.set_defaults(fn=cmd_clip)
 
     p = sub.add_parser("watch", help="post everything dropped in inbox/ and track momentum")
     p.set_defaults(fn=cmd_watch)

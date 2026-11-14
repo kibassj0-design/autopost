@@ -20,7 +20,9 @@ def velocity(db, post, now_stats, now):
     return gained / max(hours, 0.25)
 
 
-def check(cfg, db=None, dry_run=False):
+def check(cfg, db=None, dry_run=False, cut=True):
+    """cut=False: more clips are already queued, so a hot video should release the
+    next one early instead of cutting a follow-up. Returns what was (or should be) boosted."""
     m = cfg["momentum"]
     db = db or store.connect()
     now = time.time()
@@ -52,15 +54,23 @@ def check(cfg, db=None, dry_run=False):
             continue  # a follow-up doesn't spawn its own follow-ups
         if post["boosts"] >= m["max_boosts_per_video"]:
             continue
+        if not cut:
+            log.info("MOMENTUM: %s at %.0f views/h on %s -> releasing the next queued clip",
+                     post["title"], rate, post["platform"])
+            if not dry_run:
+                db.execute("UPDATE videos SET boosts = boosts + 1 WHERE id = ?", (video_id,))
+                db.commit()
+            boosted.append((post["title"], rate, None))
+            continue
         source = Path(post["source"])
         if not source.exists():
             log.warning("Trending, but the source file is gone: %s", source)
             continue
-        start = video.boost_window(video.probe(source)["duration"],
+        start = video.boost_window(video.probe(source)["duration"], cfg["max_seconds"],
                                    m["boost_clip_seconds"], post["boosts"])
         if start is None:
-            log.info("%s is trending (%.0f views/h) but the source is too short for a "
-                     "different cut; not reposting the same clip", post["title"], rate)
+            log.info("%s is trending (%.0f views/h) but all of its footage is already "
+                     "posted; not reposting the same clip", post["title"], rate)
             continue
         log.info("MOMENTUM: %s at %.0f views/h on %s -> posting a follow-up cut from %ds",
                  post["title"], rate, post["platform"], start)

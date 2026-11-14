@@ -17,6 +17,18 @@ DEFAULTS = {
     "youtube_privacy": "public",
     "tiktok_privacy": "PUBLIC_TO_EVERYONE",
     "watch_interval_seconds": 30,
+    "min_minutes_between_posts": 90,
+    "clipper": {
+        "count": 6,
+        "min_seconds": 30,
+        "max_seconds": 80,
+        "whisper_model": "small",
+        "language": None,
+        "captions": True,
+        "caption_font": "Arial",
+        "layout": "auto",
+        "max_height": 1080,
+    },
     "momentum": {
         "enabled": True,
         "check_every_minutes": 30,
@@ -46,9 +58,11 @@ def load():
     path = ROOT / "config.json"
     if path.exists():
         user = json.loads(path.read_text(encoding="utf-8"))
-        momentum = {**cfg["momentum"], **user.pop("momentum", {})}
-        cfg.update(user)
-        cfg["momentum"] = momentum
+        for key, value in user.items():
+            if isinstance(value, dict) and isinstance(cfg.get(key), dict):
+                cfg[key].update(value)
+            else:
+                cfg[key] = value
     DATA.mkdir(exist_ok=True)
     return cfg
 

@@ -93,7 +93,8 @@ def _normalize(data):
 
 def _fallback(name, note, cfg):
     """Used when Claude is unavailable, so a post is never blocked on the caption."""
-    base = note or re.sub(r"[_\-]+", " ", Path(name).stem).strip()
+    first_line = (note or "").strip().splitlines()[0] if (note or "").strip() else ""
+    base = first_line.removeprefix("Clip title: ") or re.sub(r"[_\-]+", " ", Path(name).stem).strip()
     tags = " ".join(cfg["default_hashtags"])
     return _normalize({
         "youtube": {"title": base, "description": f"{base}\n{tags}",
