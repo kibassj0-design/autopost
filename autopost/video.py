@@ -1,11 +1,24 @@
 """ffmpeg helpers: inspect a video, fix it for Reels/Shorts/TikTok, cut variants."""
 import base64
 import json
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 W, H = 1080, 1920
+
+
+def ensure_ffmpeg():
+    """Use the system ffmpeg, or fetch a bundled one so there is nothing to install."""
+    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
+        return
+    try:
+        import static_ffmpeg
+        static_ffmpeg.add_paths()
+    except Exception as e:
+        raise RuntimeError(f"ffmpeg is not installed and could not be fetched ({e}). "
+                           "Install ffmpeg and try again.")
 
 
 def _run(cmd):
@@ -65,7 +78,7 @@ def edit(src, dst, meta, start=0.0, duration=None):
               f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1[v]")
     else:
         vf = (f"[0:v]split[a][b];"
-              f"[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:5[bg];"
+              f"[a]scale={W // 4}:{H // 4}:force_original_aspect_ratio=increase,crop={W // 4}:{H // 4},boxblur=6:3,scale={W}:{H}[bg];"
               f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
               f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]")
     cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.3f}", "-i", str(src)]
@@ -79,7 +92,7 @@ def edit(src, dst, meta, start=0.0, duration=None):
     cmd += [
         "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
         "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", str(dst),
     ]
     _run(cmd)

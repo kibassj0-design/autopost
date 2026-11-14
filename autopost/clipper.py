@@ -152,7 +152,7 @@ def top_peaks(curve, count, gap):
 # ---------------------------------------------------------------- transcript
 
 def transcribe(wav, model_name, language):
-    """[{start, end, text, words: [{start, end, word}]}] via faster-whisper."""
+    """([{start, end, text, words: [{start, end, word}]}], spoken language code)."""
     from faster_whisper import WhisperModel
 
     log.info("Transcribing with whisper '%s' (first run downloads the model)", model_name)
@@ -167,7 +167,7 @@ def transcribe(wav, model_name, language):
         if time.time() - last_log > 30:
             log.info("  transcribed %.0f of %.0f min", s.end / 60, info.duration / 60)
             last_log = time.time()
-    return out
+    return out, info.language
 
 
 # ---------------------------------------------------------------- choosing moments
@@ -293,6 +293,80 @@ def fit_clips(clips, segments, duration, c):
     return kept
 
 
+# ---------------------------------------------------------------- caption translation
+
+LANG_NAMES = {"ar": "Arabic", "en": "English"}
+
+TRANSLATE_SCHEMA = {
+    "type": "object",
+    "properties": {"lines": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"i": {"type": "integer"}, "text": {"type": "string"}},
+        "required": ["i", "text"],
+        "additionalProperties": False,
+    }}},
+    "required": ["lines"],
+    "additionalProperties": False,
+}
+
+TRANSLATE_SYSTEM = """You translate the spoken lines of a video into subtitles that get \
+burned onto short social clips. Viewers read them in a second or two while watching, so \
+translate the way a native speaker would say it out loud: natural, colloquial where the \
+speaker is colloquial, and no longer than the original. Keep names, game terms and brand \
+names as they are commonly written by speakers of the target language. Speech-recognition \
+mistakes are common in the input; when a word is clearly a mishearing, translate what was \
+meant. Return exactly one translated line for every numbered input line, with the same \
+number, and never merge or split lines, because each line is shown at its own time."""
+
+
+def caption_target(spoken, setting):
+    """Which language the on-video captions should be in.
+    'swap': English speech -> Arabic captions, Arabic speech -> English, others -> Arabic."""
+    if setting == "original":
+        return spoken
+    if setting == "swap":
+        return "en" if spoken == "ar" else "ar"
+    return setting
+
+
+def translate_segments(segments, target):
+    """Same segments with text in `target`, and word timings spread across each line."""
+    numbered = "\n".join(f"{i}: {s['text']}" for i, s in enumerate(segments))
+    with anthropic.Anthropic().beta.messages.stream(
+        model=MODEL,
+        max_tokens=64000,
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
+        system=TRANSLATE_SYSTEM,
+        messages=[{"role": "user", "content":
+                   f"Translate into {LANG_NAMES.get(target, target)}:\n\n{numbered}"}],
+        output_config={"effort": "medium",
+                       "format": {"type": "json_schema", "schema": TRANSLATE_SCHEMA}},
+    ) as stream:
+        response = stream.get_final_message()
+    if response.stop_reason in ("refusal", "max_tokens"):
+        raise RuntimeError(f"model stopped with {response.stop_reason}")
+    text = next(b.text for b in response.content if b.type == "text")
+    lines = {l["i"]: l["text"].strip() for l in json.loads(text)["lines"]}
+    if len(lines) < len(segments) * 0.9:
+        raise RuntimeError(f"translation returned {len(lines)} of {len(segments)} lines")
+
+    out = []
+    for i, seg in enumerate(segments):
+        words = lines.get(i, "").split()
+        if not words:
+            continue  # a line the model dropped: show nothing rather than the wrong language
+        # The translation has no word timings, so share the line's time by word length.
+        total = sum(len(w) + 1 for w in words)
+        t, span, timed = seg["start"], seg["end"] - seg["start"], []
+        for w in words:
+            dur = span * (len(w) + 1) / total
+            timed.append({"start": t, "end": t + dur, "word": w})
+            t += dur
+        out.append({**seg, "text": " ".join(words), "words": timed})
+    return out
+
+
 # ---------------------------------------------------------------- rendering
 
 def face_crop_x(src, start, end, meta):
@@ -342,7 +416,7 @@ def write_captions(segments, start, end, path, font):
     groups, cur = [], []
     for w in words:
         if cur and (len(cur) == 3 or w["start"] - cur[-1]["end"] > 0.6
-                    or w["end"] - cur[0]["start"] > 1.6):
+                    or w["end"] - cur[0]["start"] > 2.0):
             groups.append(cur)
             cur = []
         cur.append(w)
@@ -366,7 +440,7 @@ def write_captions(segments, start, end, path, font):
     return True
 
 
-def render(src, meta, clip, segments, out, c):
+def render(src, meta, clip, caption_segments, out, c):
     start, end = clip["start"], clip["end"]
     vertical = abs(meta["width"] / meta["height"] - W / H) <= 0.02
     crop_x = None
@@ -387,12 +461,12 @@ def render(src, meta, clip, segments, out, c):
         layout = "face crop" if c["layout"] == "auto" else "centre crop"
     else:
         chain = (f"[0:v]split[a][b];"
-                 f"[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:5[bg];"
+                 f"[a]scale={W // 4}:{H // 4}:force_original_aspect_ratio=increase,crop={W // 4}:{H // 4},boxblur=6:3,scale={W}:{H}[bg];"
                  f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
                  f"[bg][fg]overlay=(W-w)/2:(H-h)/2")
         layout = "blurred fill"
     ass = out.with_suffix(".ass")
-    if c["captions"] and write_captions(segments, start, end, ass, c["caption_font"]):
+    if c["captions"] and write_captions(caption_segments, start, end, ass, c["caption_font"]):
         chain += f",ass={ass.name}"
     chain += ",setsar=1[v]"
 
@@ -404,7 +478,7 @@ def render(src, meta, clip, segments, out, c):
         graph = chain + ";[1:a]anull[a]"
     cmd += ["-t", f"{end - start:.3f}", "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
             "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
             "-movflags", "+faststart", out.name]
     # Run inside the output folder so the subtitle filter needs no path escaping.
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=out.parent)
@@ -448,12 +522,13 @@ def run(url, cfg, count=None, start=None, end=None, queue=True):
     log.info("Source: %s (%.1f min, %d chat messages)",
              meta["title"], info["duration"] / 60, len(chat))
 
-    segments, curve = [], []
+    segments, curve, spoken = [], [], None
     if info["acodec"]:
         wav = extract_audio(src, work)
         curve = hype_curve(loudness(wav), chat)
         try:
-            segments = transcribe(wav, c["whisper_model"], c["language"])
+            segments, spoken = transcribe(wav, c["whisper_model"], c["language"])
+            log.info("Spoken language: %s, %d lines", spoken, len(segments))
             (work / "transcript.json").write_text(json.dumps(segments, ensure_ascii=False))
         except Exception as e:
             log.warning("Transcription failed (%s). Continuing on audio/chat signals only, "
@@ -478,13 +553,28 @@ def run(url, cfg, count=None, start=None, end=None, queue=True):
     clips = fit_clips(clips, segments, info["duration"], c)
     if not clips:
         raise RuntimeError("No usable moments found in this video")
+    if not info["acodec"]:
+        log.warning("The source has no audio track; clips will be silent")
+
+    # Captions go on in the other language (English speech -> Arabic text and the reverse).
+    caption_segments = [s for s in segments
+                        if any(s["end"] > k["start"] and s["start"] < k["end"] for k in clips)]
+    target = caption_target(spoken, c["captions_language"])
+    if c["captions"] and caption_segments and target != spoken:
+        try:
+            caption_segments = translate_segments(caption_segments, target)
+            log.info("Captions translated %s -> %s", spoken, target)
+        except (anthropic.AnthropicError, RuntimeError, StopIteration, ValueError, KeyError,
+                TypeError) as e:
+            log.warning("Caption translation unavailable (%s); captions stay in the spoken "
+                        "language", str(e)[:160])
 
     slug = re.sub(r"[^\w]+", "-", meta["title"], flags=re.UNICODE).strip("-")[:40] or "clip"
     inbox = config.ROOT / "inbox"
     finished = []
     for n, clip in enumerate(clips, 1):
         out = out_dir / f"{slug}-{job[-6:]}-{n:02d}.mp4"
-        layout = render(src, info, clip, segments, out, c)
+        layout = render(src, info, clip, caption_segments, out, c)
         log.info("Clip %d/%d: %.0fs-%.0fs (%.0fs, score %d, %s) %s", n, len(clips),
                  clip["start"], clip["end"], clip["end"] - clip["start"], clip["score"],
                  layout, clip["title"])

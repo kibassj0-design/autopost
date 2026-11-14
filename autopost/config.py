@@ -25,6 +25,7 @@ DEFAULTS = {
         "whisper_model": "small",
         "language": None,
         "captions": True,
+        "captions_language": "swap",
         "caption_font": "Arial",
         "layout": "auto",
         "max_height": 1080,
