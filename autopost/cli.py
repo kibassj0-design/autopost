@@ -3,6 +3,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import threading
@@ -103,10 +104,104 @@ def cmd_clip(args, cfg):
         print("Queued in inbox/. `python -m autopost watch` publishes them.")
 
 
+SETUP_STEPS = [
+    ("Claude (picks the moments, translates, writes captions)",
+     "Get a key at https://console.anthropic.com -> API Keys",
+     ["ANTHROPIC_API_KEY"]),
+    ("YouTube",
+     "Google Cloud Console -> enable YouTube Data API v3 -> Credentials -> "
+     "OAuth client ID of type 'Desktop app'",
+     ["YT_CLIENT_ID", "YT_CLIENT_SECRET"]),
+    ("Instagram (Business or Creator account)",
+     "developers.facebook.com -> your app -> Instagram -> API setup with Instagram login "
+     "-> Generate token",
+     ["IG_USER_ID", "IG_ACCESS_TOKEN"]),
+    ("TikTok",
+     "developers.tiktok.com -> your app -> Login Kit + Content Posting API. "
+     "The redirect URI is any https address you registered there.",
+     ["TT_CLIENT_KEY", "TT_CLIENT_SECRET", "TT_REDIRECT_URI"]),
+]
+
+
+def _write_env(values):
+    """Set KEY=value lines in .env, keeping everything else in the file."""
+    path = config.ROOT / ".env"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    for key, value in values.items():
+        for i, line in enumerate(lines):
+            if line.split("=", 1)[0].strip() == key:
+                lines[i] = f"{key}={value}"
+                break
+        else:
+            lines.append(f"{key}={value}")
+        os.environ[key] = value
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _connected(platform):
+    if platform == "youtube":
+        return bool(config.get_tokens().get("youtube", {}).get("refresh_token"))
+    if platform == "tiktok":
+        return bool(config.get_tokens().get("tiktok", {}).get("refresh_token"))
+    return bool(os.environ.get("IG_ACCESS_TOKEN") and os.environ.get("IG_USER_ID"))
+
+
+def cmd_setup(args, cfg):
+    """Ask for each key, save it, log in where needed, then verify everything."""
+    print("\nSETUP - paste each value and press Enter. Press Enter alone to skip a "
+          "platform you don't use (or to keep a value that is already saved).\n")
+    for title, where, keys in SETUP_STEPS:
+        print(f"--- {title}\n    {where}")
+        new = {}
+        for key in keys:
+            have = " [already saved]" if os.environ.get(key) else ""
+            value = input(f"    {key}{have}: ").strip().strip("\"'")
+            if value:
+                new[key] = value
+        if new:
+            _write_env(new)
+        print()
+    if os.environ.get("IG_ACCESS_TOKEN", "").startswith("IG"):
+        _write_env({"IG_GRAPH_HOST": "graph.instagram.com"})  # Instagram-login tokens
+
+    for name, mod, keys in (("youtube", youtube, ["YT_CLIENT_ID", "YT_CLIENT_SECRET"]),
+                            ("tiktok", tiktok, ["TT_CLIENT_KEY", "TT_CLIENT_SECRET",
+                                                "TT_REDIRECT_URI"])):
+        if all(os.environ.get(k) for k in keys) and not _connected(name):
+            print(f"--- Connect your {name} account")
+            try:
+                cmd_auth(argparse.Namespace(platform=name), cfg)
+            except Exception as e:
+                print(f"    {name} login failed: {e}\n    Run setup again to retry.")
+            print()
+
+    # Publish only to what is actually connected, so one missing account
+    # doesn't turn every post into an error.
+    active = [p for p in ("youtube", "instagram", "tiktok") if _connected(p)]
+    if active:
+        cfg["platforms"] = active
+        path = config.ROOT / "config.json"
+        saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        saved["platforms"] = active
+        path.write_text(json.dumps(saved, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8")
+    print("--- Checking\n")
+    cmd_check(args, cfg)
+    return 0
+
+
 def cmd_start(args, cfg):
     """The simple mode: paste links, everything else happens on its own."""
     from . import clipper
-    threading.Thread(target=cmd_watch, args=(args, cfg), daemon=True).start()
+    if not any(_connected(p) for p in cfg["platforms"]):
+        print("No social account is connected yet, so nothing could be published.")
+        cmd_setup(args, cfg)
+    publishing = any(_connected(p) for p in cfg["platforms"])
+    if publishing:
+        threading.Thread(target=cmd_watch, args=(args, cfg), daemon=True).start()
+    else:
+        print("\nStill no account connected. Clips will be made and kept in the inbox "
+              "folder; they publish once you finish setup and start again.")
     link = getattr(args, "link", None)
     while True:
         if not link:
@@ -119,9 +214,12 @@ def cmd_start(args, cfg):
         if link:
             try:
                 clips = clipper.run(link, cfg)
-                log.info("%d clip(s) queued. They publish on their own, one every %d min. "
-                         "Keep this window open.", len(clips),
-                         cfg["min_minutes_between_posts"])
+                if publishing:
+                    log.info("%d clip(s) queued. They publish on their own, one every "
+                             "%d min. Keep this window open.", len(clips),
+                             cfg["min_minutes_between_posts"])
+                else:
+                    log.info("%d clip(s) saved in %s", len(clips), config.ROOT / "inbox")
             except Exception as e:
                 log.error("Could not process %s: %s", link, e)
         link = None
@@ -143,7 +241,8 @@ def cmd_check(args, cfg):
             fn()
             report(name, True, "login works")
         except Exception as e:
-            report(name, False, str(e)[:160])
+            # Error text can quote the request URL; never print the token in it.
+            report(name, False, re.sub(r"access_token=[^&\s)']+", "access_token=***", str(e))[:160])
 
     report("ffmpeg", bool(shutil.which("ffmpeg") and shutil.which("ffprobe")))
     for mod in ("yt_dlp", "faster_whisper", "cv2", "numpy"):
@@ -220,6 +319,9 @@ def main():
     p.add_argument("link", nargs="?")
     p.set_defaults(fn=cmd_start)
 
+    p = sub.add_parser("setup", help="enter your keys and connect your accounts")
+    p.set_defaults(fn=cmd_setup)
+
     p = sub.add_parser("check", help="verify the setup and every account login")
     p.set_defaults(fn=cmd_check)
 
@@ -260,7 +362,7 @@ def main():
                         datefmt="%H:%M:%S")
     try:
         cfg = config.load()
-        if args.cmd != "check":
+        if args.cmd not in ("check", "setup", "auth"):
             video.ensure_ffmpeg()
         raise SystemExit(args.fn(args, cfg) or 0)
     except KeyboardInterrupt:
