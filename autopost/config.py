@@ -10,6 +10,8 @@ TOKENS = DATA / "tokens.json"
 DEFAULTS = {
     "platforms": ["youtube", "instagram", "tiktok"],
     "language": "ar",
+    "ai_provider": "auto",
+    "gemini_model": "",
     "niche": "",
     "brand_voice": "",
     "default_hashtags": ["#explore", "#fyp", "#reels", "#shorts"],

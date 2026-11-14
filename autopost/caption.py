@@ -1,16 +1,12 @@
-"""Caption, title and hashtags per platform, written by Claude from video stills."""
+"""Caption, title and hashtags per platform, written by the AI model from video stills."""
 import json
 import logging
 import re
 from pathlib import Path
 
-import anthropic
-
-from . import video
+from . import llm, video
 
 log = logging.getLogger("autopost.caption")
-
-MODEL = "claude-opus-5-5"
 
 SCHEMA = {
     "type": "object",
@@ -92,7 +88,7 @@ def _normalize(data, shorts=True):
 
 
 def _fallback(name, note, cfg, shorts=True):
-    """Used when Claude is unavailable, so a post is never blocked on the caption."""
+    """Used when no AI model is available, so a post is never blocked on the caption."""
     first_line = (note or "").strip().splitlines()[0] if (note or "").strip() else ""
     base = first_line.removeprefix("Clip title: ") or re.sub(r"[_\-]+", " ", Path(name).stem).strip()
     tags = " ".join(cfg["default_hashtags"])
@@ -131,35 +127,11 @@ def generate(path, cfg, note="", boost_of=None, name=None):
             f"post's title was: {boost_of!r}. Write it as a continuation that someone who saw "
             "the first one wants to watch, with a fresh hook, not a repeat of that text.")
 
-    content = [
-        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}}
-        for b64 in video.frames_b64(path)
-    ]
-    content.append({"type": "text", "text": "\n".join(brief)})
-
     try:
-        response = anthropic.Anthropic().beta.messages.create(
-            model=MODEL,
-            max_tokens=16000,
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",  # a safety decline is retried on another model server-side
-            system=SYSTEM,
-            messages=[{"role": "user", "content": content}],
-            output_config={"effort": "medium",
-                           "format": {"type": "json_schema", "schema": SCHEMA}},
-        )
-        if response.stop_reason in ("refusal", "max_tokens"):
-            raise RuntimeError(f"model stopped with {response.stop_reason}")
-        text = next(b.text for b in response.content if b.type == "text")
-        return _normalize(json.loads(text), shorts=not landscape), "claude"
-    except anthropic.RateLimitError as e:
-        reason = f"rate limited: {e.message}"
-    except anthropic.APIStatusError as e:
-        reason = f"API error {e.status_code}: {e.message}"
-    except anthropic.APIConnectionError as e:
-        reason = f"network error: {e}"
-    except (anthropic.AnthropicError, RuntimeError, StopIteration, ValueError, KeyError,
-            TypeError) as e:  # the SDK raises TypeError when no credentials are configured
-        reason = str(e) or type(e).__name__
-    log.warning("Claude caption unavailable (%s); using the basic fallback caption", reason)
+        data, who = llm.ask_json(SYSTEM, "\n".join(brief), SCHEMA, cfg,
+                                 images=video.frames_b64(path), max_tokens=16000)
+        return _normalize(data, shorts=not landscape), who
+    except (llm.LLMError, KeyError, TypeError) as e:
+        reason = str(e)
+    log.warning("AI caption unavailable (%s); using the basic fallback caption", reason[:200])
     return _fallback(name, boost_of or note, cfg, shorts=not landscape), "fallback"

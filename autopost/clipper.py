@@ -1,7 +1,7 @@
 """Link in -> best moments found -> vertical 30-80s clips with captions -> inbox/.
 
 Works on YouTube videos, Twitch VODs/clips (anything yt-dlp can fetch) and local files.
-Moments are chosen by Claude from the transcript plus two hype signals that matter for
+Moments are chosen by the AI model (Claude or Gemini) from the transcript plus two hype signals that matter for
 streams: loudness spikes and chat-message spikes.
 """
 import json
@@ -13,13 +13,10 @@ import time
 import wave
 from pathlib import Path
 
-import anthropic
-
-from . import config, video
+from . import config, llm, video
 
 log = logging.getLogger("autopost.clipper")
 
-MODEL = "claude-opus-5-5"
 W, H = video.W, video.H
 
 
@@ -220,7 +217,7 @@ def _transcript_text(segments):
     return "\n".join(f"[{s['start']:.0f}] {s['text']}" for s in segments)
 
 
-def pick_with_claude(segments, peaks, chat_peaks, meta, duration, c):
+def pick_with_ai(segments, peaks, chat_peaks, meta, duration, c, cfg):
     brief = [
         f"Video: {meta['title']!r} by {meta['channel'] or 'unknown'}, {duration:.0f} seconds long.",
         f"Find up to {c['count']} clips, each between {c['min_seconds']} and "
@@ -232,22 +229,9 @@ def pick_with_claude(segments, peaks, chat_peaks, meta, duration, c):
         brief.append("Chat spikes (seconds): " + ", ".join(map(str, sorted(chat_peaks))))
     brief.append("Transcript:\n" + _transcript_text(segments))
 
-    # Streamed: a multi-hour transcript is a long request.
-    with anthropic.Anthropic().beta.messages.stream(
-        model=MODEL,
-        max_tokens=32000,
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        system=SYSTEM,
-        messages=[{"role": "user", "content": "\n\n".join(brief)}],
-        output_config={"effort": "high",
-                       "format": {"type": "json_schema", "schema": SCHEMA}},
-    ) as stream:
-        response = stream.get_final_message()
-    if response.stop_reason in ("refusal", "max_tokens"):
-        raise RuntimeError(f"model stopped with {response.stop_reason}")
-    text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text)["clips"]
+    data, who = llm.ask_json(SYSTEM, "\n\n".join(brief), SCHEMA, cfg, effort="high")
+    log.info("%s proposed %d moments", who, len(data["clips"]))
+    return data["clips"]
 
 
 def pick_by_signals(curve, meta, c):
@@ -329,25 +313,13 @@ def caption_target(spoken, setting):
     return setting
 
 
-def translate_segments(segments, target):
+def translate_segments(segments, target, cfg):
     """Same segments with text in `target`, and word timings spread across each line."""
     numbered = "\n".join(f"{i}: {s['text']}" for i, s in enumerate(segments))
-    with anthropic.Anthropic().beta.messages.stream(
-        model=MODEL,
-        max_tokens=64000,
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        system=TRANSLATE_SYSTEM,
-        messages=[{"role": "user", "content":
-                   f"Translate into {LANG_NAMES.get(target, target)}:\n\n{numbered}"}],
-        output_config={"effort": "medium",
-                       "format": {"type": "json_schema", "schema": TRANSLATE_SCHEMA}},
-    ) as stream:
-        response = stream.get_final_message()
-    if response.stop_reason in ("refusal", "max_tokens"):
-        raise RuntimeError(f"model stopped with {response.stop_reason}")
-    text = next(b.text for b in response.content if b.type == "text")
-    lines = {l["i"]: l["text"].strip() for l in json.loads(text)["lines"]}
+    data, _ = llm.ask_json(
+        TRANSLATE_SYSTEM, f"Translate into {LANG_NAMES.get(target, target)}:\n\n{numbered}",
+        TRANSLATE_SCHEMA, cfg, max_tokens=64000)
+    lines = {l["i"]: l["text"].strip() for l in data["lines"]}
     if len(lines) < len(segments) * 0.9:
         raise RuntimeError(f"translation returned {len(lines)} of {len(segments)} lines")
 
@@ -544,11 +516,9 @@ def run(url, cfg, count=None, start=None, end=None, queue=True):
         peaks = top_peaks(curve, 25, 30)
         chat_peaks = top_peaks(hype_curve([0.0] * len(curve), chat), 25, 30) if chat else []
         try:
-            clips = pick_with_claude(segments, peaks, chat_peaks, meta, info["duration"], c)
-            log.info("Claude proposed %d moments", len(clips))
-        except (anthropic.AnthropicError, RuntimeError, StopIteration, ValueError, KeyError,
-                TypeError) as e:  # TypeError: the SDK's "no credentials configured"
-            log.warning("Claude moment selection unavailable (%s); "
+            clips = pick_with_ai(segments, peaks, chat_peaks, meta, info["duration"], c, cfg)
+        except (RuntimeError, ValueError, KeyError, TypeError) as e:
+            log.warning("AI moment selection unavailable (%s); "
                         "falling back to loudness/chat peaks", str(e)[:160])
     if not clips:
         if not len(curve):
@@ -566,10 +536,9 @@ def run(url, cfg, count=None, start=None, end=None, queue=True):
     target = caption_target(spoken, c["captions_language"])
     if c["captions"] and caption_segments and target != spoken:
         try:
-            caption_segments = translate_segments(caption_segments, target)
+            caption_segments = translate_segments(caption_segments, target, cfg)
             log.info("Captions translated %s -> %s", spoken, target)
-        except (anthropic.AnthropicError, RuntimeError, StopIteration, ValueError, KeyError,
-                TypeError) as e:
+        except (RuntimeError, ValueError, KeyError, TypeError) as e:
             log.warning("Caption translation unavailable (%s); captions stay in the spoken "
                         "language", str(e)[:160])
 

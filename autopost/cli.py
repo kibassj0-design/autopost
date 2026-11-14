@@ -105,8 +105,11 @@ def cmd_clip(args, cfg):
 
 
 SETUP_STEPS = [
-    ("Claude (picks the moments, translates, writes captions)",
-     "Get a key at https://console.anthropic.com -> API Keys",
+    ("AI model - Gemini, FREE (picks the moments, translates, writes captions)",
+     "Get a free key at https://aistudio.google.com/apikey -> Create API key",
+     ["GEMINI_API_KEY"]),
+    ("AI model - Claude, paid, optional (used instead of Gemini when set)",
+     "https://console.anthropic.com -> API Keys. Press Enter to skip if you use Gemini.",
      ["ANTHROPIC_API_KEY"]),
     ("YouTube",
      "Google Cloud Console -> enable YouTube Data API v3 -> Credentials -> "
@@ -251,9 +254,13 @@ def cmd_check(args, cfg):
             report(f"python package {mod}", True)
         except ImportError:
             report(f"python package {mod}", False, "run: pip install -r requirements.txt")
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
-    report("Claude key (ANTHROPIC_API_KEY)", has_key,
-           "" if has_key else "without it: weaker moment picking, no translation, basic captions")
+    from . import llm
+    who = llm.provider(cfg)
+    if who == "gemini":
+        attempt("AI model (Gemini)", lambda: llm.gemini_models(cfg))
+    else:
+        report("AI model (Gemini or Claude key)", who is not None, "Claude" if who else
+               "without one: weaker moment picking, no translation, basic captions")
     if "youtube" in cfg["platforms"]:
         attempt("YouTube", youtube._headers)
     if "instagram" in cfg["platforms"]:
