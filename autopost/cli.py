@@ -159,6 +159,12 @@ def cmd_setup(args, cfg):
         for key in keys:
             have = " [already saved]" if os.environ.get(key) else ""
             value = input(f"    {key}{have}: ").strip().strip("\"'")
+            if key == "ANTHROPIC_API_KEY" and value and not value.startswith("sk-ant-"):
+                print("    That is not a Claude key (they start with sk-ant-). Skipped; "
+                      "Gemini will be used.")
+                value = ""
+                if not os.environ.get(key, "").startswith("sk-ant-"):
+                    _write_env({key: ""})  # also clear a wrong value saved earlier
             if value:
                 new[key] = value
         if new:

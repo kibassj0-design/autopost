@@ -24,8 +24,11 @@ class LLMError(RuntimeError):
 
 def provider(cfg):
     """'claude', 'gemini' or None, from the ai_provider setting and which keys exist."""
+    # A value that isn't shaped like an Anthropic key (e.g. a Gemini key pasted into
+    # the wrong field) must not switch the tool over to Claude.
     has = {
-        "claude": bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")),
+        "claude": bool(os.environ.get("ANTHROPIC_API_KEY", "").startswith("sk-ant-")
+                       or os.environ.get("ANTHROPIC_AUTH_TOKEN")),
         "gemini": bool(os.environ.get("GEMINI_API_KEY")),
     }
     choice = cfg.get("ai_provider", "auto")
@@ -39,8 +42,18 @@ def ask_json(system, text, schema, cfg, images=(), effort="medium", max_tokens=3
     who = provider(cfg)
     if who is None:
         raise LLMError("no AI key is set (GEMINI_API_KEY or ANTHROPIC_API_KEY)")
-    data = (_claude if who == "claude" else _gemini)(
-        system, text, schema, cfg, images, effort, max_tokens)
+    args = (system, text, schema, cfg, images, effort, max_tokens)
+    if who == "claude":
+        try:
+            data = _claude(*args)
+        except LLMError as e:
+            # Out of credit, bad key, outage: use the free model if there is one.
+            if not os.environ.get("GEMINI_API_KEY") or cfg.get("ai_provider") == "claude":
+                raise
+            log.warning("%s; using Gemini instead", str(e)[:160])
+            who, data = "gemini", _gemini(*args)
+    else:
+        data = _gemini(*args)
     _validate(data, schema, "answer")
     return data, who
 
