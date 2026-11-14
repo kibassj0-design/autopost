@@ -31,7 +31,10 @@ def prepare(src, cfg, start=0.0, duration=None, force=False):
 def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
             parent_id=None, boost_of=None, start=0.0, duration=None):
     """Returns (video_id, {platform: url-or-error}, text)."""
-    platforms = platforms or cfg["platforms"]
+    if not platforms:  # by default, only the enabled accounts that are actually connected
+        platforms = [p for p in cfg["platforms"] if config.connected(p) or dry_run]
+        if not platforms:
+            raise RuntimeError("No social account is connected; nothing to publish to")
     ready = prepare(src, cfg, start, duration, force=parent_id is not None)
     text, origin = caption.generate(
         ready, cfg, note, boost_of, name=re.sub(r"^\d{10}-", "", Path(src).name))

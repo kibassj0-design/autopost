@@ -88,3 +88,39 @@ def save_tokens(platform, values):
     DATA.mkdir(exist_ok=True)
     TOKENS.write_text(json.dumps(tokens, indent=2))
     TOKENS.chmod(0o600)
+
+
+def write_env(values):
+    """Set KEY=value lines in .env, keeping everything else in the file."""
+    path = ROOT / ".env"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    for key, value in values.items():
+        for i, line in enumerate(lines):
+            if line.split("=", 1)[0].strip() == key:
+                lines[i] = f"{key}={value}"
+                break
+        else:
+            lines.append(f"{key}={value}")
+        os.environ[key] = value
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def connected(platform):
+    """Whether this platform has what it needs to publish."""
+    if platform in ("youtube", "tiktok"):
+        return bool(get_tokens().get(platform, {}).get("refresh_token"))
+    return bool(os.environ.get("IG_ACCESS_TOKEN") and os.environ.get("IG_USER_ID"))
+
+
+def save_config(cfg, changes):
+    """Apply changes to the live settings and to config.json."""
+    path = ROOT / "config.json"
+    saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    for key, value in changes.items():
+        if isinstance(value, dict) and isinstance(cfg.get(key), dict):
+            cfg[key].update(value)
+            saved.setdefault(key, {}).update(value)
+        else:
+            cfg[key] = value
+            saved[key] = value
+    path.write_text(json.dumps(saved, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

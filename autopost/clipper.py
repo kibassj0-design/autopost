@@ -32,7 +32,7 @@ def parse_time(value):
     return seconds
 
 
-def download(url, work, max_height, start=None, end=None):
+def download(url, work, max_height, start=None, end=None, tell=lambda *a: None):
     """Returns (video path, {title, channel, url}, chat timestamps in seconds)."""
     local = Path(url).expanduser()
     if local.exists():
@@ -45,6 +45,7 @@ def download(url, work, max_height, start=None, end=None):
         "merge_output_format": "mp4",
         "outtmpl": str(work / "source.%(ext)s"),
         "noplaylist": True, "quiet": True, "no_warnings": True,
+        "progress_hooks": [lambda d: _download_progress(d, tell)],
     }
     if start is not None or end is not None:
         opts["download_ranges"] = yt_dlp.utils.download_range_func(
@@ -68,6 +69,13 @@ def download(url, work, max_height, start=None, end=None):
     except Exception as e:
         log.info("No chat replay (%s)", str(e)[:120])
     return path, meta, chat
+
+
+def _download_progress(d, tell):
+    if d.get("status") == "downloading":
+        total = d.get("total_bytes") or d.get("total_bytes_estimate")
+        if total:
+            tell("download", d.get("downloaded_bytes", 0) / total)
 
 
 def _chat_times(work, offset):
@@ -148,12 +156,23 @@ def top_peaks(curve, count, gap):
 
 # ---------------------------------------------------------------- transcript
 
-def transcribe(wav, model_name, language):
+def transcribe(wav, model_name, language, tell=lambda *a: None):
     """([{start, end, text, words: [{start, end, word}]}], spoken language code)."""
+    try:
+        return _transcribe(wav, model_name, language, tell, "auto", "auto")
+    except Exception as e:
+        # The usual cause on Windows: a graphics card is detected but its CUDA
+        # libraries are not installed. The processor always works, just slower.
+        log.warning("Transcription on the default device failed (%s); retrying on the "
+                    "processor", str(e)[:160])
+        return _transcribe(wav, model_name, language, tell, "cpu", "int8")
+
+
+def _transcribe(wav, model_name, language, tell, device, compute_type):
     from faster_whisper import WhisperModel
 
     log.info("Transcribing with whisper '%s' (first run downloads the model)", model_name)
-    model = WhisperModel(model_name, device="auto", compute_type="auto")
+    model = WhisperModel(model_name, device=device, compute_type=compute_type)
     segments, info = model.transcribe(str(wav), language=language, word_timestamps=True,
                                       vad_filter=True)
     out, last_log = [], time.time()
@@ -161,6 +180,8 @@ def transcribe(wav, model_name, language):
         out.append({"start": s.start, "end": s.end, "text": s.text.strip(),
                     "words": [{"start": w.start, "end": w.end, "word": w.word.strip()}
                               for w in (s.words or [])]})
+        if info.duration:
+            tell("transcribe", min(s.end / info.duration, 1.0))
         if time.time() - last_log > 30:
             log.info("  transcribed %.0f of %.0f min", s.end / 60, info.duration / 60)
             last_log = time.time()
@@ -481,8 +502,13 @@ def _note(clip, meta, segments):
     return "\n".join(lines)
 
 
-def run(url, cfg, count=None, start=None, end=None, queue=True):
-    """Returns the list of finished clip files (already in inbox/ when queue=True)."""
+def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
+    """Returns the list of finished clip files (already in inbox/ when queue=True).
+    `progress(stage, fraction, detail)` is called as the work moves along."""
+    def tell(stage, fraction=None, detail=""):
+        if progress:
+            progress(stage, fraction, detail)
+
     c = dict(cfg["clipper"])
     if count:
         c["count"] = count
@@ -491,27 +517,33 @@ def run(url, cfg, count=None, start=None, end=None, queue=True):
     out_dir = work / "out"
     out_dir.mkdir(parents=True)
 
-    src, meta, chat = download(url, work, c["max_height"], parse_time(start), parse_time(end))
+    tell("download", 0)
+    src, meta, chat = download(url, work, c["max_height"], parse_time(start),
+                               parse_time(end), tell)
     info = video.probe(src)
     if info["duration"] < c["min_seconds"]:
         raise RuntimeError(f"The video is only {info['duration']:.0f}s, shorter than one clip")
     log.info("Source: %s (%.1f min, %d chat messages)",
              meta["title"], info["duration"] / 60, len(chat))
+    tell("audio", None, meta["title"])
 
     segments, curve, spoken = [], [], None
     if info["acodec"]:
         wav = extract_audio(src, work)
         curve = hype_curve(loudness(wav), chat)
         try:
-            segments, spoken = transcribe(wav, c["whisper_model"], c["language"])
+            tell("transcribe", 0, meta["title"])
+            segments, spoken = transcribe(wav, c["whisper_model"], c["language"], tell)
             log.info("Spoken language: %s, %d lines", spoken, len(segments))
             (work / "transcript.json").write_text(json.dumps(segments, ensure_ascii=False))
         except Exception as e:
             log.warning("Transcription failed (%s). Continuing on audio/chat signals only, "
                         "without captions.", str(e)[:200])
+            tell("warning", None, f"no_captions: {str(e)[:200]}")
         wav.unlink(missing_ok=True)
 
     clips = []
+    tell("pick")
     if segments:
         peaks = top_peaks(curve, 25, 30)
         chat_peaks = top_peaks(hype_curve([0.0] * len(curve), chat), 25, 30) if chat else []
@@ -520,6 +552,7 @@ def run(url, cfg, count=None, start=None, end=None, queue=True):
         except (RuntimeError, ValueError, KeyError, TypeError) as e:
             log.warning("AI moment selection unavailable (%s); "
                         "falling back to loudness/chat peaks", str(e)[:160])
+            tell("warning", None, f"no_ai_pick: {str(e)[:200]}")
     if not clips:
         if not len(curve):
             raise RuntimeError("No audio, transcript or chat to find moments with")
@@ -535,18 +568,21 @@ def run(url, cfg, count=None, start=None, end=None, queue=True):
                         if any(s["end"] > k["start"] and s["start"] < k["end"] for k in clips)]
     target = caption_target(spoken, c["captions_language"])
     if c["captions"] and caption_segments and target != spoken:
+        tell("translate")
         try:
             caption_segments = translate_segments(caption_segments, target, cfg)
             log.info("Captions translated %s -> %s", spoken, target)
         except (RuntimeError, ValueError, KeyError, TypeError) as e:
             log.warning("Caption translation unavailable (%s); captions stay in the spoken "
                         "language", str(e)[:160])
+            tell("warning", None, f"no_translation: {str(e)[:200]}")
 
     slug = re.sub(r"[^\w]+", "-", meta["title"], flags=re.UNICODE).strip("-")[:40] or "clip"
     inbox = config.ROOT / "inbox"
     finished = []
     for n, clip in enumerate(clips, 1):
         out = out_dir / f"{slug}-{job[-6:]}-{n:02d}.mp4"
+        tell("render", (n - 1) / len(clips), f"{n}/{len(clips)}")
         layout = render(src, info, clip, caption_segments, out, c, cfg["orientation"])
         log.info("Clip %d/%d: %.0fs-%.0fs (%.0fs, score %d, %s) %s", n, len(clips),
                  clip["start"], clip["end"], clip["end"] - clip["start"], clip["score"],

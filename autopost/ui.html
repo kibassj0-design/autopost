@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>autopost</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171b21; --panel2: #1e242c; --line: #2a323c;
+    --text: #e8eaed; --muted: #97a1ad; --accent: #4f8cff; --accent-ink: #fff;
+    --ok: #3ecf8e; --warn: #f0b429; --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.6 "Segoe UI", Tahoma, "Noto Sans Arabic", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+           padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+           position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-inline-start: auto; }
+  .chip { font-size: 12.5px; padding: 3px 10px; border-radius: 999px;
+          border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .chip.on { color: var(--ok); border-color: #2c6b50; }
+  .chip.off { color: var(--bad); border-color: #6b3434; }
+  nav { display: flex; gap: 4px; padding: 0 20px; background: var(--panel);
+        border-bottom: 1px solid var(--line); overflow-x: auto; }
+  nav button { background: none; border: 0; color: var(--muted); padding: 11px 16px;
+               font: inherit; cursor: pointer; border-bottom: 2px solid transparent;
+               white-space: nowrap; }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+  main { max-width: 1000px; margin: 0 auto; padding: 20px 16px 60px; }
+  .tab { display: none; } .tab.active { display: block; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+          padding: 18px; margin-bottom: 16px; }
+  .card h2 { font-size: 16px; margin: 0 0 12px; }
+  .card h3 { font-size: 14px; margin: 18px 0 8px; color: var(--muted); font-weight: 600; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  .grow { flex: 1 1 260px; min-width: 0; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input, select { width: 100%; background: var(--panel2); color: var(--text);
+                  border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
+                  font: inherit; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  input[dir=ltr], .ltr { direction: ltr; text-align: left; }
+  input[type=checkbox] { width: auto; margin-inline-end: 6px; transform: scale(1.2); }
+  .field { flex: 1 1 200px; min-width: 0; margin-bottom: 12px; }
+  .field.small { flex: 0 1 130px; }
+  button.btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+               border-radius: 8px; padding: 9px 16px; font: inherit; cursor: pointer;
+               white-space: nowrap; }
+  button.btn:hover { border-color: var(--muted); }
+  button.btn.primary { background: var(--accent); border-color: var(--accent);
+                       color: var(--accent-ink); font-weight: 600; }
+  button.btn.danger { color: var(--bad); }
+  button.btn.sm { padding: 5px 11px; font-size: 13px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .muted { color: var(--muted); } .small { font-size: 13px; }
+  .empty { color: var(--muted); padding: 10px 0; }
+  .item { border-top: 1px solid var(--line); padding: 12px 0; }
+  .item:first-child { border-top: 0; padding-top: 0; }
+  .item .top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .item .title { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+  .bar { height: 8px; background: var(--panel2); border-radius: 999px; overflow: hidden;
+         margin-top: 8px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); width: 0;
+             transition: width .4s; }
+  .bar.busy > i { width: 35%; animation: slide 1.4s infinite ease-in-out; }
+  @keyframes slide { 0% { margin-inline-start: -35%; } 100% { margin-inline-start: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .bar.busy > i { animation: none; width: 100%; opacity: .5; } }
+  .note { font-size: 13px; padding: 6px 10px; border-radius: 8px; margin-top: 8px;
+          background: #2b2412; color: var(--warn); overflow-wrap: anywhere; }
+  .note.bad { background: #2d1717; color: var(--bad); }
+  .note.ok { background: #13281f; color: var(--ok); }
+  .banner { padding: 12px 14px; border-radius: 10px; margin-bottom: 16px;
+            background: #2b2412; color: var(--warn); border: 1px solid #5c4a17; }
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: start; padding: 9px 8px; border-top: 1px solid var(--line);
+           vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; border-top: 0; white-space: nowrap; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  a { color: #7fb0ff; }
+  .log { font: 12.5px/1.7 Consolas, "Courier New", monospace; direction: ltr; text-align: left;
+         max-height: 62vh; overflow: auto; background: #0b0d10; border-radius: 8px; padding: 12px;
+         white-space: pre-wrap; overflow-wrap: anywhere; }
+  .log .WARNING { color: var(--warn); } .log .ERROR { color: var(--bad); }
+  .saved { color: var(--ok); margin-inline-start: 12px; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+           border-radius: 12px; padding: 14px; max-width: 94vw; }
+  dialog::backdrop { background: rgba(0, 0, 0, .7); }
+  dialog video { display: block; max-width: 86vw; max-height: 74vh; border-radius: 8px;
+                 background: #000; }
+  .toggle { display: flex; align-items: center; gap: 4px; margin-inline-end: 16px; }
+  .toggle label { margin: 0; color: var(--text); font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>autopost</h1>
+  <div class="chips" id="chips"></div>
+</header>
+<nav id="nav">
+  <button data-tab="home" class="active">الرئيسية</button>
+  <button data-tab="posts">المنشورات</button>
+  <button data-tab="settings">الإعدادات والمفاتيح</button>
+  <button data-tab="log">السجل</button>
+</nav>
+<main>
+  <section class="tab active" id="tab-home">
+    <div id="banner"></div>
+    <div class="card">
+      <h2>رابط جديد</h2>
+      <div class="row">
+        <div class="grow">
+          <label for="url">رابط فيديو يوتيوب أو بث تويتش</label>
+          <input id="url" dir="ltr" placeholder="https://www.youtube.com/watch?v=...">
+        </div>
+        <button class="btn primary" id="go">اصنع المقاطع</button>
+      </div>
+      <details style="margin-top:12px">
+        <summary class="muted small" style="cursor:pointer">خيارات لهذا الرابط</summary>
+        <div class="row" style="margin-top:10px">
+          <div class="field small"><label for="count">عدد المقاطع</label><input id="count" type="number" min="1" max="30" placeholder="تلقائي"></div>
+          <div class="field small"><label for="start">من الوقت</label><input id="start" dir="ltr" placeholder="0:00:00"></div>
+          <div class="field small"><label for="end">إلى الوقت</label><input id="end" dir="ltr" placeholder="نهاية الفيديو"></div>
+        </div>
+      </details>
+      <div id="go-msg"></div>
+    </div>
+    <div class="card">
+      <h2>الشغل الجاري</h2>
+      <div id="jobs"><div class="empty">لا يوجد شغل بعد. الصق رابطا في الأعلى.</div></div>
+    </div>
+    <div class="card">
+      <div class="row" style="align-items:center;margin-bottom:10px">
+        <h2 style="margin:0" class="grow">طابور النشر</h2>
+        <button class="btn sm" id="folder">فتح المجلد</button>
+        <button class="btn sm" id="pause"></button>
+      </div>
+      <div class="muted small" id="pubstatus"></div>
+      <div id="queue" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-posts">
+    <div class="card">
+      <h2>ما تم نشره</h2>
+      <div class="tablewrap"><table>
+        <thead><tr><th>العنوان</th><th>المنصة</th><th>المشاهدات</th><th>الإعجابات</th><th>الوقت</th><th>الحالة</th></tr></thead>
+        <tbody id="posts"></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-settings">
+    <div class="card">
+      <h2>الذكاء الاصطناعي</h2>
+      <p class="muted small" style="margin-top:0">يكفي مفتاح واحد. يختار اللحظات، يترجم الكتابة على الفيديو، ويكتب الكابشن.</p>
+      <div class="row">
+        <div class="field"><label>مفتاح Gemini (مجاني) — <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></label><input data-key="GEMINI_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
+        <div class="field"><label>مفتاح Claude (مدفوع، اختياري، يبدأ بـ sk-ant-)</label><input data-key="ANTHROPIC_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>الحسابات</h2>
+      <h3>يوتيوب <span class="chip" data-conn="youtube"></span></h3>
+      <div class="row">
+        <div class="field"><label>Client ID</label><input data-key="YT_CLIENT_ID" dir="ltr" autocomplete="off"></div>
+        <div class="field"><label>Client secret</label><input data-key="YT_CLIENT_SECRET" dir="ltr" type="password" autocomplete="off"></div>
+        <div class="field small"><button class="btn" data-auth="youtube">ربط الحساب</button></div>
+      </div>
+      <h3>انستغرام <span class="chip" data-conn="instagram"></span></h3>
+      <div class="row">
+        <div class="field"><label>رقم الحساب (User ID)</label><input data-key="IG_USER_ID" dir="ltr" autocomplete="off"></div>
+        <div class="field"><label>Access token</label><input data-key="IG_ACCESS_TOKEN" dir="ltr" type="password" autocomplete="off"></div>
+      </div>
+      <h3>تيك توك <span class="chip" data-conn="tiktok"></span></h3>
+      <div class="row">
+        <div class="field"><label>Client key</label><input data-key="TT_CLIENT_KEY" dir="ltr" autocomplete="off"></div>
+        <div class="field"><label>Client secret</label><input data-key="TT_CLIENT_SECRET" dir="ltr" type="password" autocomplete="off"></div>
+        <div class="field"><label>Redirect URI</label><input data-key="TT_REDIRECT_URI" dir="ltr" autocomplete="off"></div>
+        <div class="field small"><button class="btn" data-auth="tiktok">ربط الحساب</button></div>
+      </div>
+      <div id="tt-finish" hidden>
+        <div class="row">
+          <div class="grow"><label>بعد الموافقة، انسخ عنوان الصفحة التي انتقل إليها المتصفح والصقه هنا</label><input id="tt-pasted" dir="ltr"></div>
+          <button class="btn primary" id="tt-done">إكمال الربط</button>
+        </div>
+      </div>
+      <div id="auth-msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>المقاطع</h2>
+      <div class="row">
+        <div class="field small"><label>عدد المقاطع لكل رابط</label><input data-set="clipper.count" type="number" min="1" max="30"></div>
+        <div class="field small"><label>أقل مدة (ثانية)</label><input data-set="clipper.min_seconds" type="number" min="5" max="180"></div>
+        <div class="field small"><label>أقصى مدة (ثانية)</label><input data-set="clipper.max_seconds" type="number" min="5" max="180"></div>
+        <div class="field"><label>اتجاه الفيديو</label><select data-set="orientation"><option value="original">نفس اتجاه المصدر</option><option value="vertical">طولي دائما (9:16)</option></select></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>لغة الكتابة على الفيديو</label><select data-set="clipper.captions_language"><option value="swap">عكس لغة المتحدث (إنكليزي ← عربي)</option><option value="original">نفس لغة المتحدث</option><option value="ar">عربي دائما</option><option value="en">إنكليزي دائما</option></select></div>
+        <div class="field"><label>دقة تفريغ الكلام (الأكبر أدق وأبطأ)</label><select data-set="clipper.whisper_model"><option>tiny</option><option>base</option><option>small</option><option>medium</option><option>large-v3</option></select></div>
+        <div class="field"><label>التأطير عند التحويل إلى طولي</label><select data-set="clipper.layout"><option value="auto">تلقائي (على وجه المتكلم إن وُجد)</option><option value="fit">المشهد كاملا بخلفية مموّهة</option><option value="crop">قص من الوسط</option></select></div>
+      </div>
+      <div class="toggle"><input type="checkbox" id="cap" data-set="clipper.captions"><label for="cap">اكتب الكلام على الفيديو</label></div>
+    </div>
+
+    <div class="card">
+      <h2>النشر</h2>
+      <div class="row" style="margin-bottom:12px">
+        <div class="toggle"><input type="checkbox" id="p-youtube" data-platform="youtube"><label for="p-youtube">يوتيوب</label></div>
+        <div class="toggle"><input type="checkbox" id="p-instagram" data-platform="instagram"><label for="p-instagram">انستغرام</label></div>
+        <div class="toggle"><input type="checkbox" id="p-tiktok" data-platform="tiktok"><label for="p-tiktok">تيك توك</label></div>
+      </div>
+      <div class="row">
+        <div class="field small"><label>الفاصل بين المنشورات (دقيقة)</label><input data-set="min_minutes_between_posts" type="number" min="0" max="1440"></div>
+        <div class="field small"><label>لغة الكابشن</label><select data-set="language"><option value="ar">عربي</option><option value="en">إنكليزي</option></select></div>
+        <div class="field"><label>مجال الحساب (يساعد الكابشن)</label><input data-set="niche" placeholder="مثال: مقاطع ألعاب وبثوث"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>هاشتاغاتك الثابتة (بينها مسافة)</label><input data-set="default_hashtags" dir="ltr"></div>
+        <div class="field small"><label>عتبة الزخم (مشاهدة/ساعة)</label><input data-set="momentum.views_per_hour" type="number" min="1"></div>
+      </div>
+      <div class="toggle"><input type="checkbox" id="mom" data-set="momentum.enabled"><label for="mom">عند ارتفاع المشاهدات انشر المقطع التالي فورا</label></div>
+    </div>
+
+    <div class="row" style="align-items:center">
+      <button class="btn primary" id="save">حفظ</button>
+      <button class="btn" id="check">فحص الإعداد</button>
+      <span id="save-msg"></span>
+    </div>
+    <div id="check-out" style="margin-top:14px"></div>
+  </section>
+
+  <section class="tab" id="tab-log">
+    <div class="card"><h2>السجل</h2><div class="log" id="log"></div></div>
+  </section>
+</main>
+
+<dialog id="player">
+  <video id="video" controls playsinline></video>
+  <div style="margin-top:10px;text-align:end"><button class="btn" id="close-player">إغلاق</button></div>
+</dialog>
+
+<script>
+const TOKEN = "__TOKEN__";
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const STAGES = { queued: "بالانتظار", download: "تنزيل الفيديو", audio: "تجهيز الصوت",
+  transcribe: "تفريغ الكلام", pick: "اختيار أفضل اللحظات", translate: "ترجمة الكتابة",
+  render: "تصيير المقاطع", done: "اكتمل" };
+const WARNINGS = { no_captions: "المقاطع بدون كتابة: فشل تفريغ الكلام",
+  no_ai_pick: "اللحظات اختيرت من الصوت والشات فقط (الذكاء الاصطناعي غير متاح)",
+  no_translation: "الكتابة بقيت بلغة المتحدث (الترجمة غير متاحة)" };
+const PLATFORMS = { youtube: "يوتيوب", instagram: "انستغرام", tiktok: "تيك توك" };
+
+async function api(path, body) {
+  const opt = { headers: { "X-Token": TOKEN } };
+  if (body !== undefined) {
+    opt.method = "POST";
+    opt.headers["Content-Type"] = "application/json";
+    opt.body = JSON.stringify(body);
+  }
+  const r = await fetch(path, opt);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+
+// Build elements with text set as text, never as HTML: titles come from other people's videos.
+function el(tag, props = {}, kids = []) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const kid of [].concat(kids)) if (kid) n.append(kid);
+  return n;
+}
+function note(text, kind = "") { return el("div", { class: "note " + kind, text }); }
+function fmtDur(s) { if (s == null) return ""; s = Math.round(s); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+function fmtWhen(ts) { return new Date(ts * 1000).toLocaleString("ar", { dateStyle: "short", timeStyle: "short" }); }
+
+$("#nav").addEventListener("click", e => {
+  const tab = e.target.dataset.tab;
+  if (!tab) return;
+  $$("#nav button").forEach(b => b.classList.toggle("active", b === e.target));
+  $$(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + tab));
+  if (tab === "settings") loadSettings();
+});
+
+let state = null;
+
+function render() {
+  const s = state;
+  // header chips
+  const chips = $("#chips");
+  chips.replaceChildren(
+    el("span", { class: "chip " + (s.ai ? "on" : "off"),
+                 text: "الذكاء الاصطناعي: " + (s.ai === "gemini" ? "Gemini" : s.ai === "claude" ? "Claude" : "غير مضبوط") }),
+    ...Object.entries(PLATFORMS).map(([k, name]) =>
+      el("span", { class: "chip " + (s.connected[k] ? "on" : ""), text: name + (s.connected[k] ? " ✓" : " غير مربوط") })));
+  $$("[data-conn]").forEach(c => {
+    const on = s.connected[c.dataset.conn];
+    c.className = "chip " + (on ? "on" : "off");
+    c.textContent = on ? "مربوط" : "غير مربوط";
+  });
+
+  // banner
+  const banner = $("#banner");
+  const msgs = [];
+  if (!s.ai) msgs.push("لم يُضبط مفتاح ذكاء اصطناعي: المقاطع ستُختار من الصوت فقط وبدون ترجمة.");
+  if (!s.publisher.has_account) msgs.push("لا يوجد حساب مربوط: المقاطع ستُصنع وتبقى في الطابور دون نشر.");
+  banner.replaceChildren(...(msgs.length ? [el("div", { class: "banner" }, [
+    el("div", { text: msgs.join(" ") }),
+    el("div", { class: "small", text: "اضبطها من تبويب «الإعدادات والمفاتيح»." })])] : []));
+
+  // jobs
+  const jobs = $("#jobs");
+  if (!s.jobs.length) jobs.replaceChildren(el("div", { class: "empty", text: "لا يوجد شغل بعد. الصق رابطا في الأعلى." }));
+  else jobs.replaceChildren(...s.jobs.map(j => {
+    const running = j.status === "running";
+    let label = STAGES[j.stage] || j.stage;
+    if (j.stage === "render" && j.detail) label += " " + j.detail;
+    if (running && j.fraction != null && j.stage !== "render") label += " " + Math.round(j.fraction * 100) + "%";
+    if (j.status === "done") label = "اكتمل: " + j.clips + " مقطع في الطابور";
+    if (j.status === "error") label = "فشل";
+    const bar = el("div", { class: "bar" + (running && j.fraction == null ? " busy" : "") }, el("i"));
+    if (j.fraction != null) bar.firstChild.style.width = Math.round(j.fraction * 100) + "%";
+    return el("div", { class: "item" }, [
+      el("div", { class: "top" }, [
+        el("div", { class: "title" }, [
+          el("div", { text: j.title || j.url, class: j.title ? "" : "ltr" }),
+          el("div", { class: "muted small", text: label })])]),
+      (running || j.status === "queued") ? bar : null,
+      j.error ? note(j.error, "bad") : null,
+      ...j.warnings.map(w => {
+        const [code, ...rest] = w.split(": ");
+        const n = note(WARNINGS[code] || w);
+        // The technical reason, so it can be reported as-is.
+        if (rest.length) n.append(el("div", { class: "small ltr", style: "opacity:.75", text: rest.join(": ") }));
+        return n;
+      })]);
+  }));
+
+  // queue
+  const p = s.publisher;
+  $("#pause").textContent = p.paused ? "تشغيل النشر" : "إيقاف مؤقت";
+  let status;
+  if (!p.has_account) status = "النشر متوقف: لا يوجد حساب مربوط.";
+  else if (p.paused) status = "النشر متوقف مؤقتا.";
+  else if (p.current) status = "يُنشر الآن…";
+  else if (!s.queue.length) status = "الطابور فارغ.";
+  else {
+    const wait = Math.max(0, p.next_post_at - p.now);
+    status = wait > 0 ? "المنشور التالي بعد " + Math.ceil(wait / 60) + " دقيقة." : "المنشور التالي خلال لحظات.";
+  }
+  $("#pubstatus").textContent = status;
+  const q = $("#queue");
+  q.replaceChildren(...s.queue.map(c => el("div", { class: "item" }, [
+    el("div", { class: "top" }, [
+      el("div", { class: "title" }, [
+        el("div", { text: c.title }),
+        el("div", { class: "muted small ltr", text: fmtDur(c.seconds) + "  " + c.name })]),
+      el("button", { class: "btn sm", text: "معاينة", onclick: () => play(c.name) }),
+      el("button", { class: "btn sm", text: "انشر الآن", onclick: () => act("/api/queue/publish", { name: c.name }) }),
+      el("button", { class: "btn sm danger", text: "حذف", onclick: () => {
+        if (confirm("حذف هذا المقطع نهائيا؟")) act("/api/queue/delete", { name: c.name }); } })])])));
+
+  // posts
+  const posts = $("#posts");
+  if (!s.posts.length) posts.replaceChildren(el("tr", {}, el("td", { colspan: "6", class: "muted", text: "لم يُنشر شيء بعد." })));
+  else posts.replaceChildren(...s.posts.map(r => el("tr", {}, [
+    el("td", { text: (r.parent_id ? "↳ " : "") + (r.title || "") }),
+    el("td", { text: PLATFORMS[r.platform] || r.platform }),
+    el("td", { class: "num", text: r.views == null ? "—" : r.views.toLocaleString("en") }),
+    el("td", { class: "num", text: r.likes == null ? "—" : r.likes.toLocaleString("en") }),
+    el("td", { class: "num", text: fmtWhen(r.published_at) }),
+    el("td", {}, r.error ? el("span", { style: "color:var(--bad)", text: "فشل: " + r.error })
+      : r.url ? el("a", { href: r.url, target: "_blank", rel: "noopener", text: "فتح" })
+      : el("span", { text: "نُشر" }))])));
+
+  // log (stay pinned to the bottom unless the user scrolled up)
+  const log = $("#log");
+  const pinned = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+  log.replaceChildren(...s.logs.map(l => el("div", { class: l.level, text: l.t + "  " + l.msg })));
+  if (pinned) log.scrollTop = log.scrollHeight;
+}
+
+async function refresh() {
+  try { state = await api("/api/state"); render(); }
+  catch (e) { $("#pubstatus").textContent = "انقطع الاتصال بالأداة. تأكد أن النافذة السوداء ما زالت مفتوحة."; }
+}
+async function act(path, body) {
+  try { await api(path, body); } catch (e) { alert(e.message); }
+  refresh();
+}
+
+$("#go").addEventListener("click", async () => {
+  const msg = $("#go-msg");
+  try {
+    await api("/api/clip", { url: $("#url").value, count: $("#count").value, start: $("#start").value, end: $("#end").value });
+    $("#url").value = "";
+    msg.replaceChildren();
+  } catch (e) { msg.replaceChildren(note(e.message, "bad")); }
+  refresh();
+});
+$("#url").addEventListener("keydown", e => { if (e.key === "Enter") $("#go").click(); });
+$("#pause").addEventListener("click", () => act("/api/publisher", { paused: !state.publisher.paused }));
+$("#folder").addEventListener("click", () => act("/api/open-folder", { folder: "inbox" }));
+
+function play(name) {
+  const v = $("#video");
+  v.src = "/media?name=" + encodeURIComponent(name) + "&t=" + encodeURIComponent(TOKEN);
+  $("#player").showModal();
+  v.play().catch(() => {});
+}
+function stopPlayer() { const v = $("#video"); v.pause(); v.removeAttribute("src"); v.load(); }
+$("#close-player").addEventListener("click", () => $("#player").close());
+$("#player").addEventListener("close", stopPlayer);
+
+// ---- settings
+async function loadSettings() {
+  const s = await api("/api/settings");
+  fillSettings(s);
+}
+function fillSettings(s) {
+  $$("[data-key]").forEach(i => {
+    const k = s.keys[i.dataset.key];
+    if ("value" in k) { i.value = k.value; }
+    else { i.value = ""; i.placeholder = k.set ? "محفوظ " + k.hint + " — اكتب للتغيير" : "غير مضبوط"; }
+  });
+  $$("[data-set]").forEach(i => {
+    const v = s.values[i.dataset.set];
+    if (i.type === "checkbox") i.checked = !!v;
+    else if (Array.isArray(v)) i.value = v.join(" ");
+    else i.value = v;
+  });
+  $$("[data-platform]").forEach(i => { i.checked = s.values.platforms.includes(i.dataset.platform); });
+}
+function collectSettings() {
+  const keys = {}, values = {};
+  $$("[data-key]").forEach(i => { if (i.value.trim()) keys[i.dataset.key] = i.value.trim(); });
+  $$("[data-set]").forEach(i => {
+    const name = i.dataset.set;
+    if (i.type === "checkbox") values[name] = i.checked;
+    else if (name === "default_hashtags") values[name] = i.value.split(/\s+/).filter(Boolean);
+    else if (i.type === "number") { if (i.value !== "") values[name] = Number(i.value); }
+    else values[name] = i.value;
+  });
+  values.platforms = $$("[data-platform]").filter(i => i.checked).map(i => i.dataset.platform);
+  return { keys, values };
+}
+async function save() {
+  const msg = $("#save-msg");
+  try {
+    fillSettings(await api("/api/settings", collectSettings()));
+    msg.replaceChildren(el("span", { class: "saved", text: "تم الحفظ" }));
+    setTimeout(() => msg.replaceChildren(), 2500);
+    refresh();
+    return true;
+  } catch (e) {
+    msg.replaceChildren(el("span", { style: "color:var(--bad);margin-inline-start:12px", text: e.message }));
+    return false;
+  }
+}
+$("#save").addEventListener("click", save);
+
+$("#check").addEventListener("click", async () => {
+  const out = $("#check-out"), btn = $("#check");
+  if (!await save()) return;
+  btn.disabled = true;
+  out.replaceChildren(el("div", { class: "muted", text: "يفحص…" }));
+  try {
+    const { results } = await api("/api/check", {});
+    out.replaceChildren(...results.map(r => note((r.ok ? "✓ " : "✗ ") + r.name + (r.detail ? ": " + r.detail : ""), r.ok ? "ok" : "bad")));
+    out.lastChild?.classList.add("ltr");
+    $$(".note", out).forEach(n => { n.dir = "ltr"; n.style.textAlign = "left"; });
+  } catch (e) { out.replaceChildren(note(e.message, "bad")); }
+  btn.disabled = false;
+});
+
+$$("[data-auth]").forEach(b => b.addEventListener("click", async () => {
+  const platform = b.dataset.auth, msg = $("#auth-msg");
+  if (!await save()) return;
+  try {
+    const { url } = await api("/api/auth/start", { platform });
+    window.open(url, "_blank", "noopener");
+    if (platform === "tiktok") { $("#tt-finish").hidden = false; msg.replaceChildren(); }
+    else msg.replaceChildren(note("وافق في الصفحة التي فُتحت. بعدها يتغير الوضع هنا إلى «مربوط» تلقائيا.", "ok"));
+  } catch (e) { msg.replaceChildren(note("أدخل مفاتيح هذه المنصة أولا. (" + e.message + ")", "bad")); }
+}));
+$("#tt-done").addEventListener("click", async () => {
+  const msg = $("#auth-msg");
+  try {
+    await api("/api/auth/finish", { platform: "tiktok", pasted: $("#tt-pasted").value });
+    $("#tt-finish").hidden = true; $("#tt-pasted").value = "";
+    msg.replaceChildren(note("تم ربط تيك توك.", "ok"));
+    refresh(); loadSettings();
+  } catch (e) { msg.replaceChildren(note(e.message, "bad")); }
+});
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

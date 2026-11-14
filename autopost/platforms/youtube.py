@@ -16,8 +16,9 @@ API = "https://www.googleapis.com/youtube/v3"
 UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 
-def auth_url():
+def auth_url(state=""):
     return AUTH_URL + "?" + urllib.parse.urlencode({
+        "state": state,
         "client_id": config.env("YT_CLIENT_ID"), "redirect_uri": REDIRECT,
         "response_type": "code", "scope": SCOPES,
         "access_type": "offline", "prompt": "consent"})
