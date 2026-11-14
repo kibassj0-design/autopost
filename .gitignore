@@ -1,0 +1,7 @@
+.env
+config.json
+data/
+inbox/
+done/
+failed/
+__pycache__/

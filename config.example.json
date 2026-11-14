@@ -1,0 +1,19 @@
+{
+  "platforms": ["youtube", "instagram", "tiktok"],
+  "language": "ar",
+  "niche": "",
+  "brand_voice": "",
+  "default_hashtags": ["#explore", "#fyp", "#reels", "#shorts"],
+  "max_seconds": 180,
+  "youtube_privacy": "public",
+  "tiktok_privacy": "PUBLIC_TO_EVERYONE",
+  "watch_interval_seconds": 30,
+  "momentum": {
+    "enabled": true,
+    "check_every_minutes": 30,
+    "views_per_hour": 500,
+    "window_hours": 72,
+    "max_boosts_per_video": 1,
+    "boost_clip_seconds": 30
+  }
+}

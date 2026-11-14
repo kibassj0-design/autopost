@@ -1,0 +1,86 @@
+# autopost — نشر تلقائي للريلز والشورتس والتيك توك
+
+ترمي الفيديو في مجلد، والأداة:
+
+1. **تعدّل الفيديو إذا احتاج فقط**: تحوّله إلى 1080x1920 (9:16) بخلفية مموّهة بدل القص، تقصّه للمدة المسموحة، توحّد الصوت، وتحوّله إلى H.264/AAC. إذا كان الفيديو جاهزا يُنشر كما هو.
+2. **تكتب الكابشن والعنوان والهاشتاغات** لكل منصة بشكل مختلف عبر Claude، بعد أن يشاهد لقطات من الفيديو.
+3. **تنشر مباشرة** على YouTube Shorts و Instagram Reels و TikTok.
+4. **تراقب الزخم**: إذا تجاوز فيديو عدد المشاهدات بالساعة الذي تحدده، تقص مقطع متابعة مختلفا من نفس الفيديو الأصلي وتنشره تلقائيا بكابشن جديد.
+
+## التثبيت
+
+```bash
+pip install -r requirements.txt
+```
+
+```bash
+cp .env.example .env
+```
+
+```bash
+cp config.example.json config.json
+```
+
+يلزم وجود `ffmpeg` على الجهاز.
+
+## ربط الحسابات (مرة واحدة)
+
+| المنصة | المطلوب |
+|---|---|
+| Claude | ضع `ANTHROPIC_API_KEY` في `.env`. بدونه يُنشر الفيديو بكابشن بسيط من اسم الملف والهاشتاغات الافتراضية. |
+| YouTube | أنشئ OAuth client من نوع Desktop في Google Cloud وفعّل YouTube Data API v3، ضع `YT_CLIENT_ID` و `YT_CLIENT_SECRET` ثم شغّل `python -m autopost auth youtube`. |
+| Instagram | حساب Business أو Creator. ضع `IG_USER_ID` و `IG_ACCESS_TOKEN` (توكن طويل الأمد بصلاحية `instagram_content_publish`، يحتاج تجديدا كل 60 يوما). |
+| TikTok | تطبيق في developers.tiktok.com مع Content Posting API. ضع `TT_CLIENT_KEY` و `TT_CLIENT_SECRET` و `TT_REDIRECT_URI` ثم شغّل `python -m autopost auth tiktok`. |
+
+قيود من المنصات نفسها:
+
+- **TikTok**: التطبيق غير المدقَّق (unaudited) ينشر بوضع خاص فقط. النشر العام يتطلب اجتياز تدقيق TikTok.
+- **YouTube**: مشاريع API غير الموثّقة تُقفل فيديوهاتها على "خاص" حتى يجتاز المشروع تدقيق Google. الحصة اليومية الافتراضية تكفي لحوالي 6 فيديوهات.
+- **Instagram**: الحد 100 منشور عبر API كل 24 ساعة.
+
+## الاستخدام
+
+تجربة بدون نشر (تعديل + كابشن فقط):
+
+```bash
+python -m autopost publish video.mp4 --note "عن ماذا الفيديو" --dry-run
+```
+
+نشر فيديو واحد:
+
+```bash
+python -m autopost publish video.mp4 --note "عن ماذا الفيديو"
+```
+
+الوضع التلقائي الكامل — ينشر كل ما يوضع في `inbox/` ويراقب الزخم:
+
+```bash
+python -m autopost watch
+```
+
+ملف `video.txt` بجانب `video.mp4` في `inbox/` يُستخدم كملاحظة للكابشن. بعد النشر ينتقل الفيديو إلى `done/` (أو `failed/` إذا فشلت كل المنصات). لا تحذف `done/`: مقاطع المتابعة تُقص منه.
+
+```bash
+python -m autopost status
+```
+
+```bash
+python -m autopost momentum --dry-run
+```
+
+## الإعدادات (`config.json`)
+
+| المفتاح | المعنى |
+|---|---|
+| `platforms` | المنصات المفعّلة |
+| `language` | لغة الكابشن (`ar`, `en`, ...) |
+| `niche`, `brand_voice` | مجال الحساب وأسلوبه، لتحسين الكابشن |
+| `default_hashtags` | هاشتاغاتك الثابتة |
+| `max_seconds` | أقصى مدة للمقطع، الأطول يُقص من البداية |
+| `youtube_privacy`, `tiktok_privacy` | `public` / `PUBLIC_TO_EVERYONE` |
+| `momentum.views_per_hour` | عتبة الزخم (مشاهدات بالساعة) |
+| `momentum.window_hours` | كم ساعة بعد النشر تستمر المراقبة |
+| `momentum.max_boosts_per_video` | أقصى عدد مقاطع متابعة لكل فيديو |
+| `momentum.boost_clip_seconds` | طول مقطع المتابعة |
+
+مقطع المتابعة يُنشر فقط إذا كان الفيديو الأصلي أطول من مرة ونصف `boost_clip_seconds`؛ الأداة لا تعيد نشر نفس المقطع لأن المنصات تعاقب المحتوى المكرر.
