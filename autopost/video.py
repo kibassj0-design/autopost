@@ -9,6 +9,14 @@ from pathlib import Path
 W, H = 1080, 1920
 
 
+def target_size(meta, orientation="vertical"):
+    """Output frame. 'original' keeps a landscape source landscape (1920x1080);
+    anything else, and every non-landscape source, is 1080x1920."""
+    if orientation == "original" and meta["width"] > meta["height"] * 1.1:
+        return H, W
+    return W, H
+
+
 def ensure_ffmpeg():
     """Use the system ffmpeg, or fetch a bundled one so there is nothing to install."""
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):
@@ -53,13 +61,15 @@ def probe(path):
     }
 
 
-def edit_reasons(meta, max_seconds):
+def edit_reasons(meta, max_seconds, orientation="vertical"):
     """Why this file can't be posted as-is. Empty list = post untouched."""
     reasons = []
-    if abs(meta["width"] / meta["height"] - W / H) > 0.02:
-        reasons.append(f"aspect {meta['width']}x{meta['height']} is not 9:16")
-    if meta["height"] > H:
-        reasons.append("larger than 1080x1920")
+    tw, th = target_size(meta, orientation)
+    if abs(meta["width"] / meta["height"] - tw / th) > 0.02:
+        reasons.append(f"aspect {meta['width']}x{meta['height']} is not "
+                       f"{'16:9' if tw > th else '9:16'}")
+    elif meta["height"] > th or meta["width"] > tw:
+        reasons.append(f"larger than {tw}x{th}")
     if meta["duration"] > max_seconds + 0.5:
         reasons.append(f"{meta['duration']:.0f}s is longer than {max_seconds}s")
     if meta["vcodec"] != "h264" or not meta["is_mp4"]:
@@ -69,18 +79,24 @@ def edit_reasons(meta, max_seconds):
     return reasons
 
 
-def edit(src, dst, meta, start=0.0, duration=None):
-    """Re-encode to 1080x1920 H.264/AAC. Non-vertical footage gets a blurred fill
-    behind it rather than a crop, so nothing in frame is lost."""
-    vertical = abs(meta["width"] / meta["height"] - W / H) <= 0.02
-    if vertical:
-        vf = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=decrease,"
-              f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1[v]")
-    else:
-        vf = (f"[0:v]split[a][b];"
-              f"[a]scale={W // 4}:{H // 4}:force_original_aspect_ratio=increase,crop={W // 4}:{H // 4},boxblur=6:3,scale={W}:{H}[bg];"
-              f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
-              f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]")
+def fit_filter(meta, tw, th):
+    """Filter chain (ending unlabelled) that fills a tw x th frame without cropping:
+    matching aspect is simply scaled, anything else sits on a blurred copy of itself."""
+    if abs(meta["width"] / meta["height"] - tw / th) <= 0.02:
+        return (f"[0:v]scale={tw}:{th}:force_original_aspect_ratio=decrease,"
+                f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2")
+    # Blur a quarter-size copy and scale it up: same look, a fraction of the work.
+    return (f"[0:v]split[a][b];"
+            f"[a]scale={tw // 4}:{th // 4}:force_original_aspect_ratio=increase,"
+            f"crop={tw // 4}:{th // 4},boxblur=6:3,scale={tw}:{th}[bg];"
+            f"[b]scale={tw}:{th}:force_original_aspect_ratio=decrease[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2")
+
+
+def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical"):
+    """Re-encode to H.264/AAC at 1080x1920, or 1920x1080 when a landscape source
+    keeps its orientation. Nothing in frame is cropped away."""
+    vf = fit_filter(meta, *target_size(meta, orientation)) + ",setsar=1[v]"
     cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.3f}", "-i", str(src)]
     if meta["acodec"]:
         graph = vf + ";[0:a]loudnorm=I=-14:TP=-1.5:LRA=11[a]"

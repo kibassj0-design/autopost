@@ -14,6 +14,7 @@ DEFAULTS = {
     "brand_voice": "",
     "default_hashtags": ["#explore", "#fyp", "#reels", "#shorts"],
     "max_seconds": 180,
+    "orientation": "original",
     "youtube_privacy": "public",
     "tiktok_privacy": "PUBLIC_TO_EVERYONE",
     "watch_interval_seconds": 30,

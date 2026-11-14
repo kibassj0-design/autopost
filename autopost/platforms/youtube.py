@@ -74,7 +74,7 @@ def publish(path, text, cfg):
                     "Content-Range": f"bytes {offset}-{size - 1}/{size}"})
             if r.status_code in (200, 201):
                 vid = r.json()["id"]
-                return vid, f"https://www.youtube.com/shorts/{vid}"
+                return vid, f"https://youtu.be/{vid}"
             if r.status_code < 500:
                 check(r, "YouTube upload")
         except requests.ConnectionError:
@@ -85,7 +85,7 @@ def publish(path, text, cfg):
             **headers, "Content-Length": "0", "Content-Range": f"bytes */{size}"})
         if q.status_code in (200, 201):
             vid = q.json()["id"]
-            return vid, f"https://www.youtube.com/shorts/{vid}"
+            return vid, f"https://youtu.be/{vid}"
         offset = int(q.headers["Range"].split("-")[1]) + 1 if "Range" in q.headers else 0
     raise PlatformError("YouTube upload kept failing after 5 attempts")
 

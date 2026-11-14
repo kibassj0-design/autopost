@@ -407,26 +407,31 @@ def _ass_time(t):
     return f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{t % 60:05.2f}"
 
 
-def write_captions(segments, start, end, path, font):
+def write_captions(segments, start, end, path, font, size):
     """Short word groups, timed to speech. Returns False when nothing is spoken."""
     words = [w for s in segments for w in s["words"]
              if w["word"] and w["end"] > start and w["start"] < end]
     if not words:
         return False
+    tw, th = size
+    per_line, hold = (3, 2.0) if th > tw else (6, 3.2)  # a wide frame fits a longer line
     groups, cur = [], []
     for w in words:
-        if cur and (len(cur) == 3 or w["start"] - cur[-1]["end"] > 0.6
-                    or w["end"] - cur[0]["start"] > 2.0):
+        if cur and (len(cur) == per_line or w["start"] - cur[-1]["end"] > 0.6
+                    or w["end"] - cur[0]["start"] > hold):
             groups.append(cur)
             cur = []
         cur.append(w)
     groups.append(cur)
+    # Vertical: big text above the platform's own buttons. Landscape: lower third.
+    fs, margin = (84, 430) if th > tw else (66, 70)
     lines = [
-        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}",
+        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {tw}", f"PlayResY: {th}",
         "WrapStyle: 0", "", "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Cap,{font},84,&H00FFFFFF,&H00000000,&H80000000,-1,1,6,2,2,80,80,430,1",
+        f"Style: Cap,{font},{fs},&H00FFFFFF,&H00000000,&H80000000,-1,1,{fs // 14},2,2,"
+        f"80,80,{margin},1",
         "", "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
@@ -440,33 +445,32 @@ def write_captions(segments, start, end, path, font):
     return True
 
 
-def render(src, meta, clip, caption_segments, out, c):
+def render(src, meta, clip, caption_segments, out, c, orientation):
     start, end = clip["start"], clip["end"]
-    vertical = abs(meta["width"] / meta["height"] - W / H) <= 0.02
+    tw, th = video.target_size(meta, orientation)
+    matches = abs(meta["width"] / meta["height"] - tw / th) <= 0.02
     crop_x = None
-    if not vertical and c["layout"] in ("auto", "crop"):
-        if c["layout"] == "crop":
-            crop_x = int((meta["width"] - meta["height"] * W / H) / 2)
-        else:
-            try:
-                crop_x = face_crop_x(src, start, end, meta)
-            except Exception as e:  # framing is a nicety; never lose a clip over it
-                log.warning("Face detection failed (%s); using blurred fill", str(e)[:120])
-    if vertical:
-        chain = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=decrease,"
-                 f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2")
+    if tw > th:
+        layout = "landscape"
+    elif matches:
         layout = "vertical"
-    elif crop_x is not None and meta["width"] / meta["height"] > W / H:
+    elif c["layout"] == "crop":
+        crop_x = int((meta["width"] - meta["height"] * W / H) / 2)
+    elif c["layout"] == "auto":
+        try:
+            crop_x = face_crop_x(src, start, end, meta)
+        except Exception as e:  # framing is a nicety; never lose a clip over it
+            log.warning("Face detection failed (%s); using blurred fill", str(e)[:120])
+    if crop_x is not None and meta["width"] / meta["height"] > W / H:
         chain = f"[0:v]crop=ih*{W}/{H}:ih:{crop_x}:0,scale={W}:{H}"
         layout = "face crop" if c["layout"] == "auto" else "centre crop"
     else:
-        chain = (f"[0:v]split[a][b];"
-                 f"[a]scale={W // 4}:{H // 4}:force_original_aspect_ratio=increase,crop={W // 4}:{H // 4},boxblur=6:3,scale={W}:{H}[bg];"
-                 f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
-                 f"[bg][fg]overlay=(W-w)/2:(H-h)/2")
-        layout = "blurred fill"
+        chain = video.fit_filter(meta, tw, th)
+        if not matches:
+            layout = "blurred fill"
     ass = out.with_suffix(".ass")
-    if c["captions"] and write_captions(caption_segments, start, end, ass, c["caption_font"]):
+    if c["captions"] and write_captions(caption_segments, start, end, ass,
+                                       c["caption_font"], (tw, th)):
         chain += f",ass={ass.name}"
     chain += ",setsar=1[v]"
 
@@ -574,7 +578,7 @@ def run(url, cfg, count=None, start=None, end=None, queue=True):
     finished = []
     for n, clip in enumerate(clips, 1):
         out = out_dir / f"{slug}-{job[-6:]}-{n:02d}.mp4"
-        layout = render(src, info, clip, caption_segments, out, c)
+        layout = render(src, info, clip, caption_segments, out, c, cfg["orientation"])
         log.info("Clip %d/%d: %.0fs-%.0fs (%.0fs, score %d, %s) %s", n, len(clips),
                  clip["start"], clip["end"], clip["end"] - clip["start"], clip["score"],
                  layout, clip["title"])

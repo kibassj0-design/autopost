@@ -68,7 +68,7 @@ def _clip(text, limit):
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def _normalize(data):
+def _normalize(data, shorts=True):
     yt, ig, tt = data["youtube"], data["instagram"], data["tiktok"]
     title = _clip(yt["title"].replace("<", "").replace(">", "").strip(), 100)
     tags, used = [], 0
@@ -78,7 +78,7 @@ def _normalize(data):
             tags.append(tag)
             used += len(tag) + 3
     description = yt["description"].strip()
-    if "#shorts" not in description.lower():
+    if shorts and "#shorts" not in description.lower():
         description += "\n#Shorts"
     caption = ig["caption"].strip()
     hashtags = re.findall(r"#\w+", caption)
@@ -91,7 +91,7 @@ def _normalize(data):
     }
 
 
-def _fallback(name, note, cfg):
+def _fallback(name, note, cfg, shorts=True):
     """Used when Claude is unavailable, so a post is never blocked on the caption."""
     first_line = (note or "").strip().splitlines()[0] if (note or "").strip() else ""
     base = first_line.removeprefix("Clip title: ") or re.sub(r"[_\-]+", " ", Path(name).stem).strip()
@@ -101,16 +101,21 @@ def _fallback(name, note, cfg):
                     "tags": [t.lstrip("#") for t in cfg["default_hashtags"]]},
         "instagram": {"caption": f"{base}\n\n{tags}"},
         "tiktok": {"caption": f"{base} {tags}"},
-    })
+    }, shorts)
 
 
 def generate(path, cfg, note="", boost_of=None, name=None):
     name = name or Path(path).name
+    meta = video.probe(path)
+    landscape = meta["width"] > meta["height"]
     brief = [
         f"Write in this language: {cfg['language']}.",
         f"File name: {name}",
-        f"Length: {video.probe(path)['duration']:.0f} seconds",
+        f"Length: {meta['duration']:.0f} seconds",
     ]
+    if landscape:
+        brief.append("This video is landscape (16:9). On YouTube it is a regular video, "
+                     "not a Short, so leave out #Shorts.")
     if cfg["niche"]:
         brief.append(f"Account niche: {cfg['niche']}")
     if cfg["brand_voice"]:
@@ -146,7 +151,7 @@ def generate(path, cfg, note="", boost_of=None, name=None):
         if response.stop_reason in ("refusal", "max_tokens"):
             raise RuntimeError(f"model stopped with {response.stop_reason}")
         text = next(b.text for b in response.content if b.type == "text")
-        return _normalize(json.loads(text)), "claude"
+        return _normalize(json.loads(text), shorts=not landscape), "claude"
     except anthropic.RateLimitError as e:
         reason = f"rate limited: {e.message}"
     except anthropic.APIStatusError as e:
@@ -157,4 +162,4 @@ def generate(path, cfg, note="", boost_of=None, name=None):
             TypeError) as e:  # the SDK raises TypeError when no credentials are configured
         reason = str(e) or type(e).__name__
     log.warning("Claude caption unavailable (%s); using the basic fallback caption", reason)
-    return _fallback(name, boost_of or note, cfg), "fallback"
+    return _fallback(name, boost_of or note, cfg, shorts=not landscape), "fallback"

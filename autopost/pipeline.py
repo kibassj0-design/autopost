@@ -15,7 +15,7 @@ def prepare(src, cfg, start=0.0, duration=None, force=False):
     meta = video.probe(src)
     if meta["duration"] < 3:
         raise RuntimeError(f"{src}: shorter than 3 seconds, platforms reject it")
-    reasons = video.edit_reasons(meta, cfg["max_seconds"])
+    reasons = video.edit_reasons(meta, cfg["max_seconds"], cfg["orientation"])
     if not reasons and not force:
         log.info("%s is ready as-is, no editing", Path(src).name)
         return Path(src)
@@ -24,7 +24,8 @@ def prepare(src, cfg, start=0.0, duration=None, force=False):
     out_dir = config.DATA / "edited"
     out_dir.mkdir(parents=True, exist_ok=True)
     dst = out_dir / f"{Path(src).stem}-{int(time.time())}.mp4"
-    return video.edit(src, dst, meta, start, duration or cfg["max_seconds"])
+    return video.edit(src, dst, meta, start, duration or cfg["max_seconds"],
+                      cfg["orientation"])
 
 
 def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
