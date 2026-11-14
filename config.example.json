@@ -17,6 +17,8 @@
   ],
   "max_seconds": 180,
   "orientation": "original",
+  "fps": 60,
+  "youtube_both": true,
   "youtube_privacy": "public",
   "tiktok_privacy": "PUBLIC_TO_EVERYONE",
   "watch_interval_seconds": 30,

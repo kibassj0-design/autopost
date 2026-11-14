@@ -17,6 +17,8 @@ DEFAULTS = {
     "default_hashtags": ["#explore", "#fyp", "#reels", "#shorts"],
     "max_seconds": 180,
     "orientation": "original",
+    "fps": 60,
+    "youtube_both": True,
     "youtube_privacy": "public",
     "tiktok_privacy": "PUBLIC_TO_EVERYONE",
     "watch_interval_seconds": 30,

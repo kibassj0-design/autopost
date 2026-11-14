@@ -31,7 +31,8 @@ class Publisher:
 
     def queued(self):
         """Videos waiting in inbox/, in publishing order."""
-        files = sorted(p for p in self.inbox.iterdir() if p.suffix.lower() in VIDEO_EXT)
+        files = sorted(p for p in self.inbox.iterdir() if p.suffix.lower() in VIDEO_EXT
+                       and not p.name.endswith(".alt.mp4"))
         if self.first:
             files.sort(key=lambda p: p.name != self.first)
         return files
@@ -47,8 +48,8 @@ class Publisher:
         path = self.inbox / Path(name).name  # the name only: never leave inbox/
         if path.name == self.current:
             raise RuntimeError("This clip is being published right now")
-        path.unlink(missing_ok=True)
-        path.with_suffix(".txt").unlink(missing_ok=True)
+        for extra in ("", ".txt", ".alt.mp4"):
+            (path.with_suffix(extra) if extra else path).unlink(missing_ok=True)
 
     def _stable(self, path):
         """True once a file's size stopped changing between two scans (copy finished)."""
@@ -64,6 +65,9 @@ class Publisher:
         self.current = path.name
         # Move first: the database must point at where the file will live.
         kept = Path(shutil.move(path, self.done / f"{int(time.time())}-{path.name}"))
+        alt = path.with_suffix(".alt.mp4")
+        if alt.exists():  # the other-orientation copy for YouTube stays beside it
+            shutil.move(alt, kept.with_suffix(".alt.mp4"))
         target = self.done
         try:
             _, results, _ = pipeline.publish(kept, self.cfg, note=note, db=self._db)
@@ -74,6 +78,8 @@ class Publisher:
             target = self.failed
         if target is self.failed:
             shutil.move(kept, self.failed / kept.name)
+            if kept.with_suffix(".alt.mp4").exists():
+                shutil.move(kept.with_suffix(".alt.mp4"), self.failed / kept.with_suffix(".alt.mp4").name)
         else:
             self.last_post = time.time()
         if note_file.exists():

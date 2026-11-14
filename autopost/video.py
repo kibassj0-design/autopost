@@ -51,7 +51,13 @@ def probe(path):
         rotation = abs(int(side.get("rotation", 0))) or rotation
     if rotation in (90, 270):
         w, h = h, w
+    try:
+        num, den = video["avg_frame_rate"].split("/")
+        fps = float(num) / float(den)
+    except (KeyError, ValueError, ZeroDivisionError):
+        fps = 0.0
     return {
+        "fps": fps,
         "width": w,
         "height": h,
         "duration": float(info["format"].get("duration") or video.get("duration") or 0),
@@ -70,6 +76,8 @@ def edit_reasons(meta, max_seconds, orientation="vertical"):
                        f"{'16:9' if tw > th else '9:16'}")
     elif meta["height"] > th or meta["width"] > tw:
         reasons.append(f"larger than {tw}x{th}")
+    elif meta["height"] < th - 8:
+        reasons.append(f"{meta['width']}x{meta['height']} is below {tw}x{th}")
     if meta["duration"] > max_seconds + 0.5:
         reasons.append(f"{meta['duration']:.0f}s is longer than {max_seconds}s")
     if meta["vcodec"] != "h264" or not meta["is_mp4"]:
@@ -93,7 +101,7 @@ def fit_filter(meta, tw, th):
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2")
 
 
-def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical"):
+def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical", fps=60):
     """Re-encode to H.264/AAC at 1080x1920, or 1920x1080 when a landscape source
     keeps its orientation. Nothing in frame is cropped away."""
     vf = fit_filter(meta, *target_size(meta, orientation)) + ",setsar=1[v]"
@@ -107,7 +115,7 @@ def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical"):
     cmd += ["-t", f"{min(duration or left, left):.3f}"]
     cmd += [
         "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
-        "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", str(dst),
     ]

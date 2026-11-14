@@ -197,6 +197,7 @@
         <div class="field small"><label>عدد المقاطع لكل رابط</label><input data-set="clipper.count" type="number" min="1" max="30"></div>
         <div class="field small"><label>أقل مدة (ثانية)</label><input data-set="clipper.min_seconds" type="number" min="5" max="180"></div>
         <div class="field small"><label>أقصى مدة (ثانية)</label><input data-set="clipper.max_seconds" type="number" min="5" max="180"></div>
+        <div class="field small"><label>الإطارات بالثانية</label><select data-set="fps"><option value="60">60</option><option value="30">30</option></select></div>
         <div class="field"><label>اتجاه الفيديو</label><select data-set="orientation"><option value="original">نفس اتجاه المصدر</option><option value="vertical">طولي دائما (9:16)</option></select></div>
       </div>
       <div class="row">
@@ -223,6 +224,7 @@
         <div class="field"><label>هاشتاغاتك الثابتة (بينها مسافة)</label><input data-set="default_hashtags" dir="ltr"></div>
         <div class="field small"><label>عتبة الزخم (مشاهدة/ساعة)</label><input data-set="momentum.views_per_hour" type="number" min="1"></div>
       </div>
+      <div class="toggle" style="margin-bottom:8px"><input type="checkbox" id="ytboth" data-set="youtube_both"><label for="ytboth">يوتيوب: انشر كل مقطع عرضي مرتين، كفيديو عادي وكـ Short طولي</label></div>
       <div class="toggle"><input type="checkbox" id="mom" data-set="momentum.enabled"><label for="mom">عند ارتفاع المشاهدات انشر المقطع التالي فورا</label></div>
     </div>
 
@@ -449,7 +451,7 @@ function collectSettings() {
     const name = i.dataset.set;
     if (i.type === "checkbox") values[name] = i.checked;
     else if (name === "default_hashtags") values[name] = i.value.split(/\s+/).filter(Boolean);
-    else if (i.type === "number") { if (i.value !== "") values[name] = Number(i.value); }
+    else if (i.type === "number" || name === "fps") { if (i.value !== "") values[name] = Number(i.value); }
     else values[name] = i.value;
   });
   values.platforms = $$("[data-platform]").filter(i => i.checked).map(i => i.dataset.platform);

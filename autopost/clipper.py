@@ -41,7 +41,10 @@ def download(url, work, max_height, start=None, end=None, tell=lambda *a: None):
     import yt_dlp
 
     opts = {
-        "format": f"bv*[height<={max_height}]+ba/b[height<={max_height}]/b",
+        "format": "bv*+ba/b",
+        # Best quality first: the highest resolution up to the limit, then the
+        # highest frame rate (so a 1080p60 stream is fetched as 1080p60).
+        "format_sort": [f"res:{max_height}", "fps"],
         "merge_output_format": "mp4",
         "outtmpl": str(work / "source.%(ext)s"),
         "noplaylist": True, "quiet": True, "no_warnings": True,
@@ -438,7 +441,7 @@ def write_captions(segments, start, end, path, font, size):
     return True
 
 
-def render(src, meta, clip, caption_segments, out, c, orientation):
+def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
     start, end = clip["start"], clip["end"]
     tw, th = video.target_size(meta, orientation)
     matches = abs(meta["width"] / meta["height"] - tw / th) <= 0.02
@@ -474,7 +477,7 @@ def render(src, meta, clip, caption_segments, out, c, orientation):
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
         graph = chain + ";[1:a]anull[a]"
     cmd += ["-t", f"{end - start:.3f}", "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
-            "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
             "-movflags", "+faststart", out.name]
     # Run inside the output folder so the subtitle filter needs no path escaping.
@@ -583,7 +586,16 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
     for n, clip in enumerate(clips, 1):
         out = out_dir / f"{slug}-{job[-6:]}-{n:02d}.mp4"
         tell("render", (n - 1) / len(clips), f"{n}/{len(clips)}")
-        layout = render(src, info, clip, caption_segments, out, c, cfg["orientation"])
+        layout = render(src, info, clip, caption_segments, out, c, cfg["orientation"],
+                        cfg["fps"])
+        # YouTube gets both forms of a landscape moment: the landscape clip as a
+        # regular video and a vertical one as a Short.
+        alt = None
+        if cfg["youtube_both"] and "youtube" in cfg["platforms"] and \
+                info["width"] > info["height"] * 1.1:
+            alt = out.with_suffix(".alt.mp4")
+            other = "vertical" if cfg["orientation"] == "original" else "original"
+            render(src, info, clip, caption_segments, alt, c, other, cfg["fps"])
         log.info("Clip %d/%d: %.0fs-%.0fs (%.0fs, score %d, %s) %s", n, len(clips),
                  clip["start"], clip["end"], clip["end"] - clip["start"], clip["score"],
                  layout, clip["title"])
@@ -592,6 +604,8 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
             inbox.mkdir(exist_ok=True)
             (inbox / out.with_suffix(".txt").name).write_text(note, encoding="utf-8")
             # Land the video under a name the watcher ignores, then rename in one step.
+            if alt:
+                shutil.move(alt, inbox / alt.name)
             part = inbox / (out.name + ".part")
             shutil.move(out, part)
             part.rename(inbox / out.name)
