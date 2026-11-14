@@ -155,10 +155,18 @@
   <section class="tab" id="tab-settings">
     <div class="card">
       <h2>الذكاء الاصطناعي</h2>
-      <p class="muted small" style="margin-top:0">يكفي مفتاح واحد. يختار اللحظات، يترجم الكتابة على الفيديو، ويكتب الكابشن.</p>
+      <p class="muted small" style="margin-top:0">يكفي مفتاح واحد. يختار اللحظات، يترجم الكتابة على الفيديو، ويكتب الكابشن. إذا أضفت أكثر من مفتاح مجاني تنتقل الأداة تلقائيا للتالي عند انتهاء حصة ما قبله، بهذا الترتيب.</p>
       <div class="row">
-        <div class="field"><label>مفتاح Gemini (مجاني) — <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></label><input data-key="GEMINI_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
-        <div class="field"><label>مفتاح Claude (مدفوع، اختياري، يبدأ بـ sk-ant-)</label><input data-key="ANTHROPIC_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
+        <div class="field"><label>1. Gemini (مجاني) — <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></label><input data-key="GEMINI_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
+        <div class="field"><label>2. Mistral (مجاني) — <a href="https://console.mistral.ai/api-keys" target="_blank" rel="noopener">console.mistral.ai/api-keys</a></label><input data-key="MISTRAL_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>3. OpenRouter (نماذج مجانية) — <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a></label><input data-key="OPENROUTER_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
+        <div class="field"><label>4. Groq (مجاني) — <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a></label><input data-key="GROQ_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>5. Cerebras (مجاني) — <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener">cloud.cerebras.ai</a></label><input data-key="CEREBRAS_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
+        <div class="field"><label>Claude (مدفوع، اختياري، يبدأ بـ sk-ant-) — يُستخدم أولا إن وُضع</label><input data-key="ANTHROPIC_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
       </div>
     </div>
 
@@ -256,6 +264,7 @@ const STAGES = { queued: "بالانتظار", download: "تنزيل الفيد�
 const WARNINGS = { no_captions: "المقاطع بدون كتابة: فشل تفريغ الكلام",
   no_ai_pick: "اللحظات اختيرت من الصوت والشات فقط (الذكاء الاصطناعي غير متاح)",
   no_translation: "الكتابة بقيت بلغة المتحدث (الترجمة غير متاحة)" };
+const AI_NAMES = { claude: "Claude", gemini: "Gemini", mistral: "Mistral", openrouter: "OpenRouter", groq: "Groq", cerebras: "Cerebras" };
 const PLATFORMS = { youtube: "يوتيوب", instagram: "انستغرام", tiktok: "تيك توك" };
 
 async function api(path, body) {
@@ -302,8 +311,9 @@ function render() {
   // header chips
   const chips = $("#chips");
   chips.replaceChildren(
-    el("span", { class: "chip " + (s.ai ? "on" : "off"),
-                 text: "الذكاء الاصطناعي: " + (s.ai === "gemini" ? "Gemini" : s.ai === "claude" ? "Claude" : "غير مضبوط") }),
+    el("span", { class: "chip " + (s.ai.length ? "on" : "off"),
+                 text: "الذكاء الاصطناعي: " + (s.ai.length ? AI_NAMES[s.ai[0]] + (s.ai.length > 1 ? " +" + (s.ai.length - 1) : "") : "غير مضبوط"),
+                 title: s.ai.map(n => AI_NAMES[n]).join(" ← ") }),
     ...Object.entries(PLATFORMS).map(([k, name]) =>
       el("span", { class: "chip " + (s.connected[k] ? "on" : ""), text: name + (s.connected[k] ? " ✓" : " غير مربوط") })));
   $$("[data-conn]").forEach(c => {
@@ -315,7 +325,7 @@ function render() {
   // banner
   const banner = $("#banner");
   const msgs = [];
-  if (!s.ai) msgs.push("لم يُضبط مفتاح ذكاء اصطناعي: المقاطع ستُختار من الصوت فقط وبدون ترجمة.");
+  if (!s.ai.length) msgs.push("لم يُضبط مفتاح ذكاء اصطناعي: المقاطع ستُختار من الصوت فقط وبدون ترجمة.");
   if (!s.publisher.has_account) msgs.push("لا يوجد حساب مربوط: المقاطع ستُصنع وتبقى في الطابور دون نشر.");
   banner.replaceChildren(...(msgs.length ? [el("div", { class: "banner" }, [
     el("div", { text: msgs.join(" ") }),

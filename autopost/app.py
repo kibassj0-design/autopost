@@ -23,7 +23,8 @@ from .publisher import Publisher
 log = logging.getLogger("autopost")
 
 PORT = 8765  # also the YouTube sign-in redirect, so the app can finish that login itself
-SECRET_KEYS = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "YT_CLIENT_SECRET", "IG_ACCESS_TOKEN",
+SECRET_KEYS = ["GEMINI_API_KEY", "MISTRAL_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY",
+               "CEREBRAS_API_KEY", "ANTHROPIC_API_KEY", "YT_CLIENT_SECRET", "IG_ACCESS_TOKEN",
                "TT_CLIENT_SECRET"]
 PLAIN_KEYS = ["YT_CLIENT_ID", "IG_USER_ID", "IG_GRAPH_HOST", "TT_CLIENT_KEY",
               "TT_REDIRECT_URI"]
@@ -139,7 +140,7 @@ class App:
                 "has_account": any(connected[p] for p in self.cfg["platforms"]),
             },
             "connected": connected,
-            "ai": llm.provider(self.cfg),
+            "ai": llm.providers(self.cfg),
             "logs": list(self.logs.lines)[-200:],
         }
 
@@ -173,7 +174,10 @@ class App:
             env["IG_GRAPH_HOST"] = "graph.instagram.com"  # Instagram-login tokens
         if env:
             config.write_env(env)
-            llm._gemini_models = None  # a new key may see different models
+            # A new key may see different models, and may revive a failed service.
+            llm._gemini_models = None
+            llm._compat_models.clear()
+            llm._dead.clear()
         changes = {}
         for name, value in (body.get("values") or {}).items():
             kind = SETTINGS.get(name)

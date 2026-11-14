@@ -49,6 +49,10 @@ SETUP_STEPS = [
     ("AI model - Gemini, FREE (picks the moments, translates, writes captions)",
      "Get a free key at https://aistudio.google.com/apikey -> Create API key",
      ["GEMINI_API_KEY"]),
+    ("More FREE AI keys, all optional (used automatically when the one before runs out)",
+     "Mistral: console.mistral.ai/api-keys | OpenRouter: openrouter.ai/keys | "
+     "Groq: console.groq.com/keys | Cerebras: cloud.cerebras.ai",
+     ["MISTRAL_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY"]),
     ("AI model - Claude, paid, optional (used instead of Gemini when set)",
      "https://console.anthropic.com -> API Keys. Press Enter to skip if you use Gemini.",
      ["ANTHROPIC_API_KEY"]),

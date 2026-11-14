@@ -12,6 +12,7 @@ DEFAULTS = {
     "language": "ar",
     "ai_provider": "auto",
     "gemini_model": "",
+    "ai_models": {},
     "niche": "",
     "brand_voice": "",
     "default_hashtags": ["#explore", "#fyp", "#reels", "#shorts"],

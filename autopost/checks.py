@@ -35,13 +35,18 @@ def run(cfg):
             results.append((f"python package {mod}", True, ""))
         except ImportError:
             results.append((f"python package {mod}", False, "not installed"))
-    who = llm.provider(cfg)
-    if who == "gemini":
-        _attempt(results, "AI model (Gemini)", lambda: llm.gemini_models(cfg))
-    else:
-        results.append(("AI model (Gemini or Claude key)", who is not None,
-                        "Claude" if who else "without one: weaker moment picking, "
-                        "no translation, basic captions"))
+    names = llm.providers(cfg)
+    if not names:
+        results.append(("AI model (any key)", False, "without one: weaker moment "
+                        "picking, no translation, basic captions"))
+    for name in names:
+        if name == "claude":
+            results.append(("AI model (Claude)", True, "key set"))
+        elif name == "gemini":
+            _attempt(results, "AI model (Gemini)", lambda: llm.gemini_models(cfg))
+        else:
+            _attempt(results, f"AI model ({name})",
+                     lambda name=name: llm.compat_models(name, cfg))
     if "youtube" in cfg["platforms"]:
         _attempt(results, "YouTube", youtube._headers)
     if "instagram" in cfg["platforms"]:

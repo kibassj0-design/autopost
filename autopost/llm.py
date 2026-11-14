@@ -22,40 +22,74 @@ class LLMError(RuntimeError):
     pass
 
 
-def provider(cfg):
-    """'claude', 'gemini' or None, from the ai_provider setting and which keys exist."""
-    # A value that isn't shaped like an Anthropic key (e.g. a Gemini key pasted into
-    # the wrong field) must not switch the tool over to Claude.
-    has = {
-        "claude": bool(os.environ.get("ANTHROPIC_API_KEY", "").startswith("sk-ant-")
-                       or os.environ.get("ANTHROPIC_AUTH_TOKEN")),
-        "gemini": bool(os.environ.get("GEMINI_API_KEY")),
-    }
+# Free OpenAI-compatible services: name -> (key variable, API base, model preferences).
+# Preferences are tried in order against the models the key can actually use.
+COMPAT = {
+    "mistral": ("MISTRAL_API_KEY", "https://api.mistral.ai/v1",
+                [r"^mistral-large-latest$", r"^mistral-medium-latest$",
+                 r"^mistral-small-latest$", r"mistral-(large|medium|small)"]),
+    "openrouter": ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1", [r":free$"]),
+    "groq": ("GROQ_API_KEY", "https://api.groq.com/openai/v1",
+             [r"llama-3\.3-70b", r"llama.*70b", r"gpt-oss-120b", r"qwen", r"llama"]),
+    "cerebras": ("CEREBRAS_API_KEY", "https://api.cerebras.ai/v1",
+                 [r"llama-?3\.3-70b", r"llama.*70b", r"gpt-oss-120b", r"qwen", r"llama"]),
+}
+ORDER = ["claude", "gemini", "mistral", "openrouter", "groq", "cerebras"]
+_dead = set()  # providers that failed in a way that won't fix itself during this run
+
+
+def has_key(name):
+    if name == "claude":
+        # A value that isn't shaped like an Anthropic key (e.g. another service's key
+        # pasted into the wrong field) must not switch the tool over to Claude.
+        return bool(os.environ.get("ANTHROPIC_API_KEY", "").startswith("sk-ant-")
+                    or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    if name == "gemini":
+        return bool(os.environ.get("GEMINI_API_KEY"))
+    return bool(os.environ.get(COMPAT[name][0]))
+
+
+def providers(cfg):
+    """The services to try, in order. `ai_provider` set to a name puts that one first."""
+    names = [n for n in ORDER if has_key(n)]
     choice = cfg.get("ai_provider", "auto")
-    if choice in has:
-        return choice if has[choice] else None
-    return "claude" if has["claude"] else "gemini" if has["gemini"] else None
+    if choice in names:
+        names.remove(choice)
+        names.insert(0, choice)
+    return names
+
+
+def provider(cfg):
+    """The service that will be asked first, or None when no key is set."""
+    names = providers(cfg)
+    return names[0] if names else None
 
 
 def ask_json(system, text, schema, cfg, images=(), effort="medium", max_tokens=32000):
-    """Returns (parsed object, provider name). Raises LLMError when no model can answer."""
-    who = provider(cfg)
-    if who is None:
-        raise LLMError("no AI key is set (GEMINI_API_KEY or ANTHROPIC_API_KEY)")
-    args = (system, text, schema, cfg, images, effort, max_tokens)
-    if who == "claude":
+    """Returns (parsed object, provider name). Each configured service is tried in turn,
+    so one running out of free quota just hands over to the next."""
+    names = providers(cfg)
+    if not names:
+        raise LLMError("no AI key is set")
+    problems = []
+    for who in names:
+        if who in _dead:
+            continue
         try:
-            data = _claude(*args)
+            if who == "claude":
+                data = _claude(system, text, schema, cfg, images, effort, max_tokens)
+            elif who == "gemini":
+                data = _gemini(system, text, schema, cfg, images, effort, max_tokens)
+            else:
+                data = _compat(who, system, text, schema, cfg)
+            _validate(data, schema, "answer")
+            return data, who
         except LLMError as e:
-            # Out of credit, bad key, outage: use the free model if there is one.
-            if not os.environ.get("GEMINI_API_KEY") or cfg.get("ai_provider") == "claude":
-                raise
-            log.warning("%s; using Gemini instead", str(e)[:160])
-            who, data = "gemini", _gemini(*args)
-    else:
-        data = _gemini(*args)
-    _validate(data, schema, "answer")
-    return data, who
+            problems.append(f"{who}: {e}")
+            if who != names[-1]:
+                log.warning("%s could not answer (%s); trying the next AI service",
+                            who, str(e)[:160])
+    raise LLMError(" || ".join(problems)[:600] or "every AI service is unavailable")
 
 
 def _validate(value, schema, where):
@@ -210,3 +244,84 @@ def _gemini(system, text, schema, cfg, images, effort, max_tokens):
                 break
     raise LLMError("Gemini could not answer: " + (" | ".join(problems)[:500] or
                                                    "the free quota of every model is used up"))
+
+
+# ---------------------------------------------------------------- OpenAI-compatible
+
+_compat_models = {}
+_compat_spent = set()  # (provider, model) pairs whose quota ran out during this run
+
+
+def compat_models(name, cfg):
+    """Models to try for this service, best first."""
+    key_var, base, prefs = COMPAT[name]
+    chosen = (cfg.get("ai_models") or {}).get(name)
+    if name not in _compat_models:
+        try:
+            r = requests.get(f"{base}/models", timeout=30,
+                             headers={"Authorization": f"Bearer {os.environ[key_var]}"})
+        except requests.RequestException as e:
+            raise LLMError(f"network error {e}")
+        if r.status_code in (401, 403):
+            _dead.add(name)
+            raise LLMError(f"key rejected (HTTP {r.status_code})")
+        if r.status_code >= 400:
+            raise LLMError(f"HTTP {r.status_code} {r.text[:160]}")
+        body = r.json()
+        items = body.get("data", body) if isinstance(body, dict) else body
+        skip = ("guard", "whisper", "tts", "embed", "moderation", "ocr", "vision-preview",
+                "image", "audio", "transcribe", "rerank")
+        models = [m for m in items if isinstance(m, dict) and m.get("id")
+                  and not any(w in m["id"].lower() for w in skip)]
+        # A model that can read more at once copes with longer transcripts.
+        models.sort(key=lambda m: -(m.get("context_length") or m.get("context_window")
+                                    or m.get("max_context_length") or 0))
+        ranked = []
+        for pattern in prefs:
+            for m in models:
+                if re.search(pattern, m["id"], re.I) and m["id"] not in ranked:
+                    ranked.append(m["id"])
+        if not ranked:
+            raise LLMError("no suitable model is available for this key")
+        _compat_models[name] = ranked[:4]
+    return ([chosen] if chosen else []) + [m for m in _compat_models[name] if m != chosen]
+
+
+def _compat(name, system, text, schema, cfg):
+    key_var, base, _ = COMPAT[name]
+    instructions = (
+        f"{system}\n\nReply with one JSON object and nothing else: no explanation and no "
+        f"code fences. It must match this JSON Schema exactly:\n{json.dumps(schema)}")
+    headers = {"Authorization": f"Bearer {os.environ[key_var]}"}
+    problems = []
+    for model in compat_models(name, cfg):
+        if (name, model) in _compat_spent:
+            continue
+        body = {"model": model, "response_format": {"type": "json_object"},
+                "messages": [{"role": "system", "content": instructions},
+                             {"role": "user", "content": text}]}
+        for attempt in range(2):
+            try:
+                r = requests.post(f"{base}/chat/completions", json=body, headers=headers,
+                                  timeout=600)
+            except requests.RequestException as e:
+                problems.append(f"{model}: network error {e}")
+                break
+            if r.status_code == 400 and "response_format" in body and attempt == 0 \
+                    and "response_format" in r.text:
+                body.pop("response_format")  # a model without JSON mode still follows the prompt
+                continue
+            if r.status_code in (401, 403):
+                _dead.add(name)
+                raise LLMError(f"key rejected (HTTP {r.status_code})")
+            if r.status_code >= 400:  # quota used up, input too long for this model, retired...
+                if r.status_code == 429:
+                    _compat_spent.add((name, model))
+                problems.append(f"{model}: HTTP {r.status_code} {r.text[:120]}")
+                break
+            try:
+                return _extract_json(r.json()["choices"][0]["message"]["content"])
+            except (KeyError, IndexError, TypeError, ValueError) as e:
+                problems.append(f"{model}: unusable answer ({type(e).__name__})")
+                break
+    raise LLMError(" | ".join(problems)[:400] or "the free quota of every model is used up")
