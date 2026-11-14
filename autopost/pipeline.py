@@ -28,25 +28,18 @@ def prepare(src, cfg, start=0.0, duration=None, force=False):
                       cfg["orientation"], cfg["fps"])
 
 
-def _publish_youtube_alt(alt, text, cfg, db, video_id, results):
-    """The same moment in the other orientation: vertical lands as a Short,
-    landscape as a regular video."""
-    meta = video.probe(alt)
-    is_short = meta["height"] > meta["width"]
+def _is_vertical(path):
+    meta = video.probe(path)
+    return meta["height"] > meta["width"]
+
+
+def _youtube_text(path, text):
+    """YouTube text for this file: #Shorts on a vertical upload, not on a landscape one."""
+    meta = video.probe(path)
     description = re.sub(r"\s*#shorts\b", "", text["description"], flags=re.I).strip()
-    if is_short:
+    if meta["height"] > meta["width"]:
         description += "\n#Shorts"
-    kind = "youtube short" if is_short else "youtube video"
-    try:
-        remote_id, url = ALL["youtube"].publish(
-            str(alt), {**text, "description": description}, cfg)
-        store.add_post(db, video_id, "youtube", remote_id, url)
-        results[kind] = url or "published"
-        log.info("%s: published %s", kind, url or "")
-    except Exception as e:
-        store.add_post(db, video_id, "youtube", error=str(e))
-        results[kind] = f"FAILED: {e}"
-        log.error("%s: %s", kind, e)
+    return {**text, "description": description}
 
 
 def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
@@ -67,15 +60,26 @@ def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
     db = db or store.connect()
     video_id = store.add_video(db, src, text["youtube"]["title"], parent_id)
     results = {}
+    # A second render in the other orientation, made by the clipper for YouTube.
+    alt = Path(src).with_suffix(".alt.mp4")
+    uploads = []
     for name in platforms:
+        if name == "youtube" and alt.exists():
+            vertical = [p for p in (alt, ready) if _is_vertical(p)]
+            if cfg["youtube_mode"] == "short" and vertical:
+                uploads.append((name, vertical[0], _youtube_text(vertical[0], text[name])))
+            else:  # "both": the regular video and the Short
+                for path in (ready, alt):
+                    uploads.append((name, path, _youtube_text(path, text[name])))
+        else:
+            uploads.append((name, ready, text[name]))
+
+    for name, path, body in uploads:
         try:
-            remote_id, url = ALL[name].publish(str(ready), text[name], cfg)
+            remote_id, url = ALL[name].publish(str(path), body, cfg)
             store.add_post(db, video_id, name, remote_id, url)
             results[name] = url or "published"
             log.info("%s: published %s", name, url or "")
-            alt = Path(src).with_suffix(".alt.mp4")
-            if name == "youtube" and alt.exists():
-                _publish_youtube_alt(alt, text["youtube"], cfg, db, video_id, results)
         except Exception as e:  # one platform failing must not stop the others
             store.add_post(db, video_id, name, error=str(e))
             results[name] = f"FAILED: {e}"

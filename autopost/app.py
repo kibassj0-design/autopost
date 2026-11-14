@@ -31,7 +31,7 @@ PLAIN_KEYS = ["YT_CLIENT_ID", "IG_USER_ID", "IG_GRAPH_HOST", "TT_CLIENT_KEY",
 SETTINGS = {
     "platforms": list, "language": str, "niche": str, "brand_voice": str,
     "default_hashtags": list, "orientation": str, "ai_provider": str,
-    "min_minutes_between_posts": int, "fps": int, "youtube_both": bool,
+    "min_minutes_between_posts": int, "fps": int, "youtube_mode": str,
     "clipper.count": int, "clipper.min_seconds": int, "clipper.max_seconds": int,
     "clipper.whisper_model": str, "clipper.captions": bool,
     "clipper.captions_language": str, "clipper.layout": str,
@@ -195,6 +195,8 @@ class App:
         clip = {**self.cfg["clipper"], **changes.get("clipper", {})}
         if not 5 <= clip["min_seconds"] <= clip["max_seconds"] <= 180:
             raise ValueError("مدة المقطع: الحد الأدنى يجب أن يكون أصغر من الأقصى، والأقصى 180 ثانية.")
+        if changes.get("youtube_mode") not in (None, "short", "both", "video"):
+            raise ValueError("youtube_mode: short / both / video")
         if changes.get("fps") not in (None, 30, 60):
             raise ValueError("عدد الإطارات: 30 أو 60.")
         if changes:

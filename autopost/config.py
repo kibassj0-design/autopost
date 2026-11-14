@@ -18,7 +18,7 @@ DEFAULTS = {
     "max_seconds": 180,
     "orientation": "original",
     "fps": 60,
-    "youtube_both": True,
+    "youtube_mode": "short",
     "youtube_privacy": "public",
     "tiktok_privacy": "PUBLIC_TO_EVERYONE",
     "watch_interval_seconds": 30,

@@ -588,14 +588,17 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
         tell("render", (n - 1) / len(clips), f"{n}/{len(clips)}")
         layout = render(src, info, clip, caption_segments, out, c, cfg["orientation"],
                         cfg["fps"])
-        # YouTube gets both forms of a landscape moment: the landscape clip as a
-        # regular video and a vertical one as a Short.
+        # YouTube can take the other orientation of a landscape moment: a vertical
+        # render uploads as a Short, a landscape one as a regular video.
         alt = None
-        if cfg["youtube_both"] and "youtube" in cfg["platforms"] and \
-                info["width"] > info["height"] * 1.1:
+        wide_source = info["width"] > info["height"] * 1.1
+        main_is_wide = wide_source and cfg["orientation"] == "original"
+        mode = cfg["youtube_mode"]
+        if wide_source and "youtube" in cfg["platforms"] and (
+                mode == "both" or (mode == "short" and main_is_wide)):
             alt = out.with_suffix(".alt.mp4")
-            other = "vertical" if cfg["orientation"] == "original" else "original"
-            render(src, info, clip, caption_segments, alt, c, other, cfg["fps"])
+            render(src, info, clip, caption_segments, alt, c,
+                   "vertical" if main_is_wide else "original", cfg["fps"])
         log.info("Clip %d/%d: %.0fs-%.0fs (%.0fs, score %d, %s) %s", n, len(clips),
                  clip["start"], clip["end"], clip["end"] - clip["start"], clip["score"],
                  layout, clip["title"])
