@@ -704,20 +704,29 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, s
 
 import threading as _threading
 
-# One clip job uses the whole processor; two at once would each take twice as long.
-# Downloads and live recording go on in parallel, only this part waits its turn.
+# Transcribing and rendering use the whole processor; two at once would each take
+# twice as long. Only those steps take turns: downloads, live recording and waiting
+# on the AI service never hold anyone up.
 PROCESS_LOCK = _threading.Lock()
+
+
+class _heavy:
+    def __init__(self, tell, stage):
+        self.tell, self.stage = tell, stage
+
+    def __enter__(self):
+        if not PROCESS_LOCK.acquire(blocking=False):
+            self.tell("waiting")
+            PROCESS_LOCK.acquire()
+            self.tell(self.stage)
+
+    def __exit__(self, *exc):
+        PROCESS_LOCK.release()
 
 
 def process(src, meta, chat, cfg, work, tell, queue=True, part=""):
     """Find the strong moments in `src` and turn each into a finished clip."""
-    if not PROCESS_LOCK.acquire(blocking=False):
-        tell("waiting")
-        PROCESS_LOCK.acquire()
-    try:
-        return _process(src, meta, chat, cfg, work, tell, queue, part)
-    finally:
-        PROCESS_LOCK.release()
+    return _process(src, meta, chat, cfg, work, tell, queue, part)
 
 
 def _process(src, meta, chat, cfg, work, tell, queue, part):
@@ -748,8 +757,9 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
         curve = hype_curve(loudness(wav), chat)
         try:
             tell("transcribe", 0, meta["title"])
-            segments, spoken = transcribe(wav, c["whisper_model"], c["language"], tell,
-                                          c.get("whisper_device", "cpu"))
+            with _heavy(tell, "transcribe"):
+                segments, spoken = transcribe(wav, c["whisper_model"], c["language"], tell,
+                                              c.get("whisper_device", "cpu"))
             log.info("Spoken language: %s, %d lines", spoken, len(segments))
         except Exception as e:
             log.warning("Transcription failed (%s). Continuing on audio/chat signals only, "
@@ -850,7 +860,9 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
                 tell("warning", None, f"low_source: {c_info['width']}x{c_info['height']}")
         else:
             c_src, c_info, c_clip, c_caps = src, info, clip, caption_segments
-        layout = render(c_src, c_info, c_clip, c_caps, out, c, cfg["orientation"], cfg["fps"])
+        with _heavy(tell, "render"):
+            layout = render(c_src, c_info, c_clip, c_caps, out, c, cfg["orientation"],
+                            cfg["fps"])
         # YouTube can take the other orientation of a landscape moment: a vertical
         # render uploads as a Short, a landscape one as a regular video.
         alt = None
@@ -860,8 +872,9 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
         if wide_source and "youtube" in cfg["platforms"] and (
                 mode == "both" or (mode == "short" and main_is_wide)):
             alt = out.with_suffix(".alt.mp4")
-            render(c_src, c_info, c_clip, c_caps, alt, c,
-                   "vertical" if main_is_wide else "original", cfg["fps"])
+            with _heavy(tell, "render"):
+                render(c_src, c_info, c_clip, c_caps, alt, c,
+                       "vertical" if main_is_wide else "original", cfg["fps"])
         log.info("Clip %d/%d: %.0fs-%.0fs (%.0fs, score %d, %s) %s [%s, %.0fs]", n,
                  len(clips), clip["start"], clip["end"], clip["end"] - clip["start"],
                  clip["score"], layout, clip["title"], enc, time.time() - began)

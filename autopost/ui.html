@@ -308,9 +308,9 @@
 const TOKEN = "__TOKEN__";
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const STAGES = { queued: "بالانتظار", waiting: "بانتظار انتهاء الرابط السابق", live: "يتابع البث المباشر",
+const STAGES = { queued: "بالانتظار", waiting: "بانتظار دوره (رابط آخر يستخدم المعالج الآن)", live: "يتابع البث المباشر",
   cancelled: "أُلغي", download: "تنزيل الفيديو", audio: "تجهيز الصوت",
-  transcribe: "تفريغ الكلام", pick: "اختيار أفضل اللحظات", translate: "ترجمة الكتابة",
+  transcribe: "تفريغ الكلام", pick: "الذكاء الاصطناعي يختار أفضل اللحظات", translate: "ترجمة الكتابة",
   render: "تصيير المقاطع", done: "اكتمل" };
 const WARNINGS = { no_captions: "المقاطع بدون كتابة: فشل تفريغ الكلام",
   no_ai_pick: "اللحظات اختيرت من الصوت والشات فقط (الذكاء الاصطناعي غير متاح)",

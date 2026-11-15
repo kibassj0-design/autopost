@@ -225,8 +225,11 @@ def _gemini(system, text, schema, cfg, images, effort, max_tokens):
                 body = {k: v for k, v in body.items() if k != "generationConfig"}
                 continue
             if r.status_code == 429 and attempt == 0 and "PerMinute" in r.text:
-                log.info("Gemini %s per-minute limit reached, waiting 60s", model)
-                time.sleep(60)
+                # Wait only as long as Gemini asks (usually seconds), at most 30s.
+                m = re.search(r'"retryDelay":\s*"(\d+(?:\.\d+)?)s"', r.text)
+                delay = min(float(m.group(1)) if m else 20.0, 30.0)
+                log.info("Gemini %s per-minute limit reached, waiting %.0fs", model, delay)
+                time.sleep(delay)
                 continue
             if r.status_code >= 400:  # daily quota used up, model retired, ...: next model
                 if r.status_code == 429:
