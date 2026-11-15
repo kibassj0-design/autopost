@@ -95,6 +95,14 @@ def _fallback(name, note, cfg, shorts=True):
     """Used when no AI model is available, so a post is never blocked on the caption."""
     first_line = (note or "").strip().splitlines()[0] if (note or "").strip() else ""
     base = first_line.removeprefix("Clip title: ") or re.sub(r"[_\-]+", " ", Path(name).stem).strip()
+    lang = post_language(cfg, note)
+    spoken = re.search(r"^Spoken language: (\w+)", note or "", re.M)
+    if spoken and spoken.group(1) != lang:
+        try:  # keep the language swap even without an AI model
+            from . import translate
+            base = translate.lines([base], lang)[0] or base
+        except Exception as e:
+            log.warning("Caption translation unavailable: %s", e)
     tags = " ".join(cfg["default_hashtags"])
     return _normalize({
         "youtube": {"title": base, "description": f"{base}\n{tags}",

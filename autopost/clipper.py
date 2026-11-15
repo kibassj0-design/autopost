@@ -373,12 +373,19 @@ def caption_target(spoken, setting):
 def translate_segments(segments, target, cfg):
     """Same segments with text in `target`, and word timings spread across each line."""
     numbered = "\n".join(f"{i}: {s['text']}" for i, s in enumerate(segments))
-    data, _ = llm.ask_json(
-        TRANSLATE_SYSTEM, f"Translate into {LANG_NAMES.get(target, target)}:\n\n{numbered}",
-        TRANSLATE_SCHEMA, cfg, max_tokens=64000)
-    lines = {l["i"]: l["text"].strip() for l in data["lines"]}
-    if len(lines) < len(segments) * 0.9:
-        raise RuntimeError(f"translation returned {len(lines)} of {len(segments)} lines")
+    try:
+        data, _ = llm.ask_json(
+            TRANSLATE_SYSTEM, f"Translate into {LANG_NAMES.get(target, target)}:\n\n{numbered}",
+            TRANSLATE_SCHEMA, cfg, max_tokens=64000)
+        lines = {l["i"]: l["text"].strip() for l in data["lines"]}
+        if len(lines) < len(segments) * 0.9:
+            raise RuntimeError(f"translation returned {len(lines)} of {len(segments)} lines")
+    except (RuntimeError, ValueError, KeyError, TypeError) as e:
+        # No AI available: a plainer keyless translation still flips the language.
+        log.warning("AI translation unavailable (%s); using the basic translator",
+                    str(e)[:160])
+        from . import translate
+        lines = dict(enumerate(translate.lines([s["text"] for s in segments], target)))
 
     out = []
     for i, seg in enumerate(segments):

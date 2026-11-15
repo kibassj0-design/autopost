@@ -28,9 +28,39 @@ def prepare(src, cfg, start=0.0, duration=None, force=False):
                       cfg["orientation"], cfg["fps"])
 
 
-def _is_vertical(path):
+SHORT_MAX = 179  # YouTube lists vertical uploads up to 3 minutes as Shorts
+
+
+def _is_short(path):
     meta = video.probe(path)
-    return meta["height"] > meta["width"]
+    return meta["height"] > meta["width"] and meta["duration"] <= SHORT_MAX
+
+
+def _vertical_copy(path, cfg):
+    """A 9:16 render of `path`, so YouTube files it as a Short."""
+    meta = video.probe(path)
+    out = config.DATA / "edited" / f"{Path(path).stem}-short.mp4"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if not out.exists():
+        log.info("Making a vertical copy of %s for YouTube Shorts", Path(path).name)
+        video.edit(path, out, meta, 0, min(meta["duration"], SHORT_MAX), "vertical",
+                   cfg["fps"])
+    return out
+
+
+def _youtube_files(src, ready, cfg):
+    """What goes to YouTube. 'short' (default): one vertical Short, made here when the
+    clip has none. 'both': the Short plus the landscape video. 'video': the clip as is."""
+    mode = cfg["youtube_mode"]
+    if mode == "video":
+        return [ready]
+    alt = Path(src).with_suffix(".alt.mp4")  # the clipper's other-orientation render
+    short = next((p for p in (alt, ready) if p.exists() and _is_short(p)), None)
+    if short is None:
+        short = _vertical_copy(ready, cfg)
+    if mode == "both" and not _is_short(ready):
+        return [short, ready]
+    return [short]
 
 
 def _youtube_text(path, text):
@@ -60,17 +90,11 @@ def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
     db = db or store.connect()
     video_id = store.add_video(db, src, text["youtube"]["title"], parent_id)
     results = {}
-    # A second render in the other orientation, made by the clipper for YouTube.
-    alt = Path(src).with_suffix(".alt.mp4")
     uploads = []
     for name in platforms:
-        if name == "youtube" and alt.exists():
-            vertical = [p for p in (alt, ready) if _is_vertical(p)]
-            if cfg["youtube_mode"] == "short" and vertical:
-                uploads.append((name, vertical[0], _youtube_text(vertical[0], text[name])))
-            else:  # "both": the regular video and the Short
-                for path in (ready, alt):
-                    uploads.append((name, path, _youtube_text(path, text[name])))
+        if name == "youtube":
+            for path in _youtube_files(src, ready, cfg):
+                uploads.append((name, path, _youtube_text(path, text[name])))
         else:
             uploads.append((name, ready, text[name]))
 
