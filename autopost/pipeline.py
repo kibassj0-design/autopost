@@ -48,6 +48,21 @@ def _vertical_copy(path, cfg):
     return out
 
 
+def _instagram_file(path, cfg):
+    """Instagram takes at most 1920 pixels a side: a 2K clip goes up as a 1080p copy."""
+    meta = video.probe(path)
+    if max(meta["width"], meta["height"]) <= 1920:
+        return path
+    out = config.DATA / "edited" / f"{Path(path).stem}-1080.mp4"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if not out.exists():
+        log.info("Making a 1080p copy of %s for Instagram", Path(path).name)
+        landscape = meta["width"] > meta["height"]
+        video.edit(path, out, meta, 0, None, "original" if landscape else "vertical",
+                   cfg["fps"], resolution="1080")
+    return out
+
+
 def _youtube_files(src, ready, cfg):
     """What goes to YouTube. 'short' (default): one vertical Short, made here when the
     clip has none. 'both': the Short plus the landscape video. 'video': the clip as is."""
@@ -95,6 +110,8 @@ def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
         if name == "youtube":
             for path in _youtube_files(src, ready, cfg):
                 uploads.append((name, path, _youtube_text(path, text[name])))
+        elif name == "instagram":
+            uploads.append((name, _instagram_file(ready, cfg), text[name]))
         else:
             uploads.append((name, ready, text[name]))
 

@@ -9,12 +9,25 @@ from pathlib import Path
 W, H = 1080, 1920
 
 
-def target_size(meta, orientation="vertical"):
-    """Output frame. 'original' keeps a landscape source landscape (1920x1080);
-    anything else, and every non-landscape source, is 1080x1920."""
+QUALITY = {"resolution": "auto"}  # set from config.json by config.load()
+
+
+def short_side(meta, resolution=None):
+    """1080 or 1440 (2K). 'auto' gives 2K when the source has it, never below 1080."""
+    setting = str(resolution or QUALITY["resolution"])
+    if setting in ("1080", "1440"):
+        return int(setting)
+    return 1440 if min(meta["width"], meta["height"]) >= 1400 else 1080
+
+
+def target_size(meta, orientation="vertical", resolution=None):
+    """Output frame. 'original' keeps a landscape source landscape (e.g. 1920x1080);
+    anything else, and every non-landscape source, is vertical (e.g. 1080x1920)."""
+    short = short_side(meta, resolution)
+    long = short * 16 // 9
     if orientation == "original" and meta["width"] > meta["height"] * 1.1:
-        return H, W
-    return W, H
+        return long, short
+    return short, long
 
 
 def ensure_ffmpeg():
@@ -101,10 +114,11 @@ def fit_filter(meta, tw, th):
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2")
 
 
-def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical", fps=60):
+def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical", fps=60,
+         resolution=None):
     """Re-encode to H.264/AAC at 1080x1920, or 1920x1080 when a landscape source
     keeps its orientation. Nothing in frame is cropped away."""
-    vf = fit_filter(meta, *target_size(meta, orientation)) + ",setsar=1[v]"
+    vf = fit_filter(meta, *target_size(meta, orientation, resolution)) + ",setsar=1[v]"
     cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.3f}", "-i", str(src)]
     if meta["acodec"]:
         graph = vf + ";[0:a]loudnorm=I=-14:TP=-1.5:LRA=11[a]"

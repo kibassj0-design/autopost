@@ -508,7 +508,7 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
         except Exception as e:  # framing is a nicety; never lose a clip over it
             log.warning("Face detection failed (%s); using blurred fill", str(e)[:120])
     if crop_x is not None and meta["width"] / meta["height"] > W / H:
-        chain = f"[0:v]crop=ih*{W}/{H}:ih:{crop_x}:0,scale={W}:{H}"
+        chain = f"[0:v]crop=ih*{W}/{H}:ih:{crop_x}:0,scale={tw}:{th}"
         layout = "face crop" if c["layout"] == "auto" else "centre crop"
     else:
         chain = video.fit_filter(meta, tw, th)
@@ -574,7 +574,8 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
     out_dir.mkdir(parents=True)
 
     tell("download", 0)
-    src, meta, chat = download(url, work, c["max_height"], parse_time(start),
+    # Fetch up to 2K so clips can come out at 1080p or 1440p, never lower.
+    src, meta, chat = download(url, work, max(c["max_height"], 1440), parse_time(start),
                                parse_time(end), tell)
     info = video.probe(src)
     if c["auto"]:  # a ceiling only: weak moments are dropped by score below
@@ -585,6 +586,10 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
     log.info("Source: %s (%.1f min, %d chat messages)",
              meta["title"], info["duration"] / 60, len(chat))
     tell("audio", None, meta["title"])
+    if min(info["width"], info["height"]) < 1000:
+        log.warning("The source is only %dx%d; clips are upscaled to 1080p but can't "
+                    "gain detail that isn't there", info["width"], info["height"])
+        tell("warning", None, f"low_source: {info['width']}x{info['height']}")
 
     segments, curve, spoken = [], [], None
     if info["acodec"]:

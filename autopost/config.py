@@ -20,6 +20,7 @@ DEFAULTS = {
     "max_seconds": 180,
     "orientation": "original",
     "fps": 60,
+    "resolution": "auto",
     "youtube_mode": "short",
     "youtube_privacy": "public",
     "tiktok_privacy": "PUBLIC_TO_EVERYONE",
@@ -38,7 +39,7 @@ DEFAULTS = {
         "captions_language": "swap",
         "caption_font": "Arial",
         "layout": "auto",
-        "max_height": 1080,
+        "max_height": 1440,
     },
     "momentum": {
         "enabled": True,
@@ -75,6 +76,8 @@ def load():
             else:
                 cfg[key] = value
     DATA.mkdir(exist_ok=True)
+    from . import video
+    video.QUALITY["resolution"] = cfg["resolution"]
     return cfg
 
 
