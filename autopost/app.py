@@ -220,11 +220,11 @@ class App:
             return youtube.auth_url(self.oauth_state)
         return tiktok.auth_url()
 
-    def instagram_connect(self, token):
+    def instagram_connect(self, token, user_id=""):
         from .platforms import instagram
         if not token.strip():
             raise ValueError("الصق التوكن أولا.")
-        name = instagram.connect(token)
+        name = instagram.connect(token, user_id.strip() or None)
         if "instagram" not in self.cfg["platforms"]:
             config.save_config(self.cfg, {"platforms": self.cfg["platforms"] + ["instagram"]})
         return name
@@ -385,7 +385,8 @@ def make_handler(app):
             elif path == "/api/auth/start":
                 return {"url": app.auth_start(body["platform"])}
             elif path == "/api/instagram/connect":
-                return {"username": app.instagram_connect(str(body.get("token", "")))}
+                return {"username": app.instagram_connect(str(body.get("token", "")),
+                                                      str(body.get("user_id", "")))}
             elif path == "/api/disconnect":
                 if body.get("platform") not in ("youtube", "instagram", "tiktok"):
                     raise ValueError("unknown platform")

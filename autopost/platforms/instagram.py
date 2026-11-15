@@ -20,10 +20,18 @@ def _base():
     return f"https://{host}/{VERSION}"
 
 
-def identify(token):
-    """(user id, username, graph host) for a token, so only the token has to be pasted."""
+def identify(token, user_id=None):
+    """(user id, username, graph host) for a token, so only the token has to be pasted.
+    A system-user token (EAA...) may see no Facebook Page; then the Instagram account
+    id from Business Settings is given as well and checked directly."""
     from . import PlatformError
     token = token.strip()
+    if token.startswith("EAA") and user_id:
+        r = requests.get(f"https://graph.facebook.com/{VERSION}/{user_id.strip()}",
+                         timeout=30, params={"fields": "id,username", "access_token": token})
+        if r.status_code >= 400:
+            raise PlatformError("Instagram: " + r.json().get("error", {}).get("message", r.text[:200]))
+        return r.json()["id"], r.json().get("username", ""), "graph.facebook.com"
     if token.startswith("EAA"):
         r = requests.get(f"https://graph.facebook.com/{VERSION}/me/accounts", timeout=30,
                          params={"fields": "name,instagram_business_account{id,username}",
@@ -34,8 +42,9 @@ def identify(token):
             ig = page.get("instagram_business_account")
             if ig:
                 return ig["id"], ig.get("username", ""), "graph.facebook.com"
-        raise PlatformError("No Instagram Business/Creator account is linked to the "
-                            "Facebook Pages this token can see")
+        raise PlatformError("This token sees no Facebook Page with an Instagram account. "
+                            "Add the Instagram account ID too (Business Settings -> "
+                            "Accounts -> Instagram accounts)")
     r = requests.get(f"https://graph.instagram.com/{VERSION}/me", timeout=30,
                      params={"fields": "user_id,username,account_type", "access_token": token})
     if r.status_code >= 400:
@@ -51,8 +60,8 @@ def identify(token):
     return str(me.get("user_id") or me["id"]), me.get("username", ""), "graph.instagram.com"
 
 
-def connect(token):
-    user_id, username, host = identify(token)
+def connect(token, user_id=None):
+    user_id, username, host = identify(token, user_id)
     config.write_env({"IG_ACCESS_TOKEN": token.strip(), "IG_USER_ID": user_id,
                       "IG_GRAPH_HOST": host})
     config.save_tokens("instagram", {"username": username, "refreshed_at": time.time()})

@@ -189,7 +189,8 @@
         <li>اضغط <b>Generate token</b> بجانب حسابك، وانسخ التوكن (يبدأ بـ IG) والصقه هنا. الأداة تعرف رقم الحساب وحدها وتجدد التوكن تلقائيا.</li>
       </ol>
       <div class="row">
-        <div class="grow"><label>Access token</label><input id="ig-token" dir="ltr" type="password" autocomplete="off" placeholder="IGAA..."></div>
+        <div class="grow"><label>Access token</label><input id="ig-token" dir="ltr" type="password" autocomplete="off" placeholder="IGAA... أو EAA..."></div>
+        <div class="field small"><label>رقم حساب انستغرام (لرموز EAA فقط، إن طُلب)</label><input id="ig-id" dir="ltr" autocomplete="off"></div>
         <button class="btn primary" id="ig-connect">ربط انستغرام</button>
       </div>
       <div class="msg" data-msg="instagram"></div>
@@ -574,7 +575,7 @@ $("#ig-connect").addEventListener("click", async () => {
   btn.disabled = true;
   accountMsg("instagram", "يتحقق من التوكن…");
   try {
-    const { username } = await api("/api/instagram/connect", { token: $("#ig-token").value });
+    const { username } = await api("/api/instagram/connect", { token: $("#ig-token").value, user_id: $("#ig-id").value });
     $("#ig-token").value = "";
     accountMsg("instagram", "تم ربط انستغرام" + (username ? ": @" + username : "") + ".", "ok");
     refresh();

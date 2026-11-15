@@ -17,7 +17,7 @@ def _attempt(results, name, fn):
 
 
 def _instagram():
-    instagram.identify(config.env("IG_ACCESS_TOKEN"))
+    instagram.identify(config.env("IG_ACCESS_TOKEN"), config.env("IG_USER_ID", required=False))
 
 
 def run(cfg):
