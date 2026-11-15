@@ -171,13 +171,26 @@ def transcribe(wav, model_name, language, tell=lambda *a: None):
         return _transcribe(wav, model_name, language, tell, "cpu", "int8")
 
 
+def read_wav(wav):
+    """16 kHz mono PCM WAV -> float32 samples in [-1, 1], as Whisper expects."""
+    import numpy as np
+
+    with wave.open(str(wav)) as w:
+        if w.getframerate() != 16000 or w.getnchannels() != 1 or w.getsampwidth() != 2:
+            raise RuntimeError("audio must be 16 kHz mono 16-bit")
+        raw = w.readframes(w.getnframes())
+    return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+
+
 def _transcribe(wav, model_name, language, tell, device, compute_type):
     from faster_whisper import WhisperModel
 
     log.info("Transcribing with whisper '%s' (first run downloads the model)", model_name)
     model = WhisperModel(model_name, device=device, compute_type=compute_type)
-    segments, info = model.transcribe(str(wav), language=language, word_timestamps=True,
-                                      vad_filter=True)
+    # Hand over the samples ourselves: faster-whisper's own file reader uses PyAV,
+    # and newer PyAV releases break it ("unexpected keyword argument 'metadata_errors'").
+    segments, info = model.transcribe(read_wav(wav), language=language,
+                                      word_timestamps=True, vad_filter=True)
     out, last_log = [], time.time()
     for s in segments:
         out.append({"start": s.start, "end": s.end, "text": s.text.strip(),
@@ -489,7 +502,7 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
 
 # ---------------------------------------------------------------- orchestration
 
-def _note(clip, meta, segments):
+def _note(clip, meta, segments, spoken_lang=None):
     spoken = " ".join(s["text"] for s in segments
                       if s["end"] > clip["start"] and s["start"] < clip["end"])
     lines = [f"Clip title: {clip['title']}"]
@@ -502,6 +515,8 @@ def _note(clip, meta, segments):
                      f"Credit {meta['channel']} in the caption.")
     if spoken:
         lines.append(f"What is said in the clip: {spoken[:1200]}")
+    if spoken_lang:
+        lines.append(f"Spoken language: {spoken_lang}")
     return "\n".join(lines)
 
 
@@ -602,7 +617,7 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
         log.info("Clip %d/%d: %.0fs-%.0fs (%.0fs, score %d, %s) %s", n, len(clips),
                  clip["start"], clip["end"], clip["end"] - clip["start"], clip["score"],
                  layout, clip["title"])
-        note = _note(clip, meta, segments)
+        note = _note(clip, meta, segments, spoken)
         if queue:
             inbox.mkdir(exist_ok=True)
             (inbox / out.with_suffix(".txt").name).write_text(note, encoding="utf-8")

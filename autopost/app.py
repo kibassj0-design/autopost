@@ -30,7 +30,7 @@ PLAIN_KEYS = ["YT_CLIENT_ID", "IG_USER_ID", "IG_GRAPH_HOST", "TT_CLIENT_KEY",
               "TT_REDIRECT_URI"]
 # Settings the page may change: name -> type (nested ones as "section.name").
 SETTINGS = {
-    "platforms": list, "language": str, "niche": str, "brand_voice": str,
+    "platforms": list, "language": str, "post_language": str, "niche": str, "brand_voice": str,
     "default_hashtags": list, "orientation": str, "ai_provider": str,
     "min_minutes_between_posts": int, "fps": int, "youtube_mode": str,
     "clipper.count": int, "clipper.min_seconds": int, "clipper.max_seconds": int,

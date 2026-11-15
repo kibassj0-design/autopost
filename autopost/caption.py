@@ -55,6 +55,10 @@ short body and a question or call to action that invites comments. End with 5-8 
 mix a couple of broad ones with specific niche ones.
 - TikTok: one or two punchy lines in the way people talk on the app, then 4-6 hashtags.
 
+When the notes include what is said in the clip, build the caption from that speech: \
+its key line, claim or punchline, translated into the requested language when it differs \
+from the spoken one. Keep names as speakers of that language usually write them.
+
 Pick hashtags people actually search for this subject. Generic filler tags add nothing unless \
 the creator listed them as defaults. Write the three versions differently, since the same \
 audience often follows all three accounts."""
@@ -100,12 +104,33 @@ def _fallback(name, note, cfg, shorts=True):
     }, shorts)
 
 
+def post_language(cfg, note):
+    """Language of the post text. With 'swap' it is the opposite of what is spoken in
+    the clip (English speech -> Arabic, Arabic -> English, anything else -> Arabic);
+    with 'original' the spoken one. Videos with no known speech use `language`."""
+    setting = cfg.get("post_language", "swap")
+    if setting not in ("swap", "original"):
+        return setting
+    m = re.search(r"^Spoken language: (\w+)", note or "", re.M)
+    if not m:
+        return cfg["language"]
+    spoken = m.group(1)
+    if setting == "original":
+        return spoken
+    return "en" if spoken == "ar" else "ar"
+
+
+LANG_NAMES = {"ar": "Arabic", "en": "English"}
+
+
 def generate(path, cfg, note="", boost_of=None, name=None):
     name = name or Path(path).name
     meta = video.probe(path)
     landscape = meta["width"] > meta["height"]
+    lang = post_language(cfg, note)
     brief = [
-        f"Write in this language: {cfg['language']}.",
+        f"Write every field in {LANG_NAMES.get(lang, lang)}, whatever language the "
+        f"video or these notes are in.",
         f"File name: {name}",
         f"Length: {meta['duration']:.0f} seconds",
     ]
