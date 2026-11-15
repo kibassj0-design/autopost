@@ -110,37 +110,28 @@ def download(url, work, max_height, start=None, end=None, tell=lambda *a: None, 
     return path, meta, chat
 
 
-def fetch_sections(meta, clips, work, tell=lambda *a: None):
-    """Download just the clips' stretches in video. Returns {clip index: (file, offset)}
-    where offset is the source time at which that file starts."""
+def fetch_section(meta, clip, work, n, tell=lambda *a: None):
+    """Download just one clip's stretch in video. Returns (file, offset), offset being
+    the source time at which that file starts."""
     import yt_dlp
 
-    ranges = [(max(0.0, k["start"] - 1), k["end"] + 1) for k in clips]
+    start, end = max(0.0, clip["start"] - 1), clip["end"] + 1
     secdir = work / "sections"
     secdir.mkdir(exist_ok=True)
     opts = _ydl_opts(work, tell, **_video_format(meta["max_height"]))
     opts.update({
-        "outtmpl": str(secdir / "s%(section_start)09.3f.%(ext)s"),
-        "download_ranges": yt_dlp.utils.download_range_func(None, ranges),
+        "outtmpl": str(secdir / f"s{n:03d}.%(ext)s"),
+        "download_ranges": yt_dlp.utils.download_range_func(None, [(start, end)]),
         # Exact cut points, so caption timing lines up with the clip.
         "force_keyframes_at_cuts": True,
     })
-    log.info("Downloading %d video section(s) instead of the whole video", len(ranges))
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.process_ie_result(meta["info"], download=True)
-    files = {}
-    for path in secdir.iterdir():
-        m = re.match(r"s(\d+\.\d+)\.", path.name)
-        if m and not path.name.endswith((".part", ".ytdl")):
-            files[round(float(m.group(1)), 1)] = path
-    out = {}
-    for i, (start, _) in enumerate(ranges):
-        hit = files.get(round(start, 1))
-        if hit:
-            out[i] = (hit, start)
-    if len(out) < len(ranges):
-        raise RuntimeError(f"only {len(out)} of {len(ranges)} sections downloaded")
-    return out
+    file = next((p for p in secdir.glob(f"s{n:03d}.*")
+                 if not p.name.endswith((".part", ".ytdl"))), None)
+    if file is None:
+        raise RuntimeError(f"section {n} was not downloaded")
+    return file, start
 
 
 def js_runtimes():
@@ -228,13 +219,13 @@ def hype_curve(levels, chat):
     return np.convolve(score, np.ones(15) / 15, "same")
 
 
-def top_peaks(curve, count, gap, floor=None):
+def top_peaks(curve, count, gap, floor=None, strict=False):
     """Highest points of the curve, at least `gap` seconds apart."""
     import numpy as np
 
     peaks = []
     for i in np.argsort(curve)[::-1]:
-        if floor is not None and peaks and curve[i] < floor:
+        if floor is not None and (peaks or strict) and curve[i] < floor:
             break  # the rest is ordinary footage, not a moment
         if all(abs(int(i) - p) >= gap for p in peaks):
             peaks.append(int(i))
@@ -392,7 +383,8 @@ def pick_by_signals(curve, meta, c):
     length = (c["min_seconds"] + c["max_seconds"]) / 2
     clips = []
     floor = 1.0 if c.get("auto") else None  # a clear spike above the video's norm
-    for rank, peak in enumerate(top_peaks(curve, c["count"], c["max_seconds"], floor)):
+    for rank, peak in enumerate(top_peaks(curve, c["count"], c["max_seconds"], floor,
+                                          strict=c.get("strict", False))):
         start = max(0.0, peak - length * 0.6)
         clips.append({"start": start, "end": start + length, "score": 50 - rank,
                       "title": f"{meta['title']} #{rank + 1}".strip(),
@@ -733,6 +725,7 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
     # Always as many clips as the video has strong moments: a 30-minute video with
     # two great moments gives two clips, one with ten gives ten.
     c["auto"] = True
+    c["strict"] = bool(part)  # live chunks: only real highlights
     out_dir = work / "out"
     out_dir.mkdir(exist_ok=True)
     remote = meta.get("remote")
@@ -779,12 +772,13 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
         if not len(curve):
             raise RuntimeError("No audio, transcript or chat to find moments with")
         clips = pick_by_signals(curve, meta, c)
-    if len(clips) > 1:
-        strong = [k for k in clips if k["score"] >= c["min_score"]]
-        if len(strong) < len(clips):
-            log.info("Keeping %d strong moment(s) of %d (score >= %d)",
-                     max(len(strong), 1), len(clips), c["min_score"])
-        clips = strong or sorted(clips, key=lambda k: -k["score"])[:1]
+    strong = [k for k in clips if k["score"] >= c["min_score"]]
+    if len(strong) < len(clips):
+        log.info("%d strong moment(s) of %d (score >= %d)", len(strong), len(clips),
+                 c["min_score"])
+    # A live chunk gives nothing when nothing exciting happened in it. A whole video
+    # still gives its best moment, so pasting a link never ends empty-handed.
+    clips = strong or ([] if c["strict"] else sorted(clips, key=lambda k: -k["score"])[:1])
     clips = fit_clips(clips, segments, info["duration"], c)
     if not clips:
         log.info("No strong moment in %s%s", meta["title"], part)
@@ -792,24 +786,48 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
     if not info["acodec"]:
         log.warning("The source has no audio track; clips will be silent")
 
-    # Captions go on in the other language (English speech -> Arabic text and the reverse).
+    # From here three things overlap: the subtitles are translated, the clips' video
+    # sections download one after another, and each clip renders as soon as its
+    # section is in (and the translation is done).
+    import queue as _queue
+
     caption_segments = [x for x in segments
                         if any(x["end"] > k["start"] and x["start"] < k["end"] for k in clips)]
     target = caption_target(spoken, c["captions_language"])
-    if c["captions"] and caption_segments and target != spoken:
-        tell("translate")
+    translated = {"segments": caption_segments}
+
+    def translate():
         try:
-            caption_segments = translate_segments(caption_segments, target, cfg)
+            translated["segments"] = translate_segments(caption_segments, target, cfg)
             log.info("Captions translated %s -> %s", spoken, target)
-        except (RuntimeError, ValueError, KeyError, TypeError) as e:
+        except Exception as e:
             log.warning("Caption translation unavailable (%s); captions stay in the spoken "
                         "language", str(e)[:160])
             tell("warning", None, f"no_translation: {str(e)[:200]}")
 
-    sections = {}
+    translator = None
+    if c["captions"] and caption_segments and target != spoken:
+        tell("translate")
+        translator = _threading.Thread(target=translate, daemon=True)
+        translator.start()
+
+    arrived = _queue.Queue()
+
+    def download_sections():
+        for n, clip in enumerate(clips, 1):
+            try:
+                arrived.put((n, fetch_section(meta, clip, work, n, tell), None))
+            except Exception as e:  # handed to the renderer, which stops the job
+                arrived.put((n, None, e))
+                return
+
     if remote:
+        log.info("Downloading %d video section(s) instead of the whole video", len(clips))
         tell("download", None, "sections")
-        sections = fetch_sections(meta, clips, work, tell)
+        _threading.Thread(target=download_sections, daemon=True).start()
+    if translator:
+        translator.join()
+    caption_segments = translated["segments"]
 
     slug = re.sub(r"[^\w]+", "-", meta["title"], flags=re.UNICODE).strip("-")[:40] or "clip"
     stamp = work.name[-6:] + part.replace(" #", "-p")
@@ -820,8 +838,11 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
         out = out_dir / f"{slug}-{stamp}-{n:02d}.mp4"
         tell("render", (n - 1) / len(clips), f"{n}/{len(clips)}")
         began = time.time()
-        if remote:  # render from this clip's own section file
-            file, offset = sections[n - 1]
+        if remote:  # render from this clip's own section file, once it has arrived
+            got, section, error = arrived.get()
+            if error:
+                raise error
+            file, offset = section
             c_src, c_info = file, video.probe(file)
             c_clip = {**clip, "start": clip["start"] - offset, "end": clip["end"] - offset}
             c_caps = _shift(caption_segments, offset)
@@ -858,7 +879,7 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
         else:
             out.with_suffix(".txt").write_text(note, encoding="utf-8")
             finished.append(out)
-    if sections:
+    if remote:
         shutil.rmtree(work / "sections", ignore_errors=True)
     return finished
 
