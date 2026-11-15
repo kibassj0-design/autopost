@@ -578,8 +578,8 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
                                parse_time(end), tell)
     info = video.probe(src)
     if c["auto"]:  # a ceiling only: weak moments are dropped by score below
-        # Only a safety ceiling (one per minute, 60 at most); the score decides.
-        c["count"] = int(min(60, max(3, info["duration"] // 60)))
+        # No real limit: as many as could fit without overlapping (100 at most).
+        c["count"] = int(min(100, max(1, info["duration"] // c["min_seconds"])))
     if info["duration"] < c["min_seconds"]:
         raise RuntimeError(f"The video is only {info['duration']:.0f}s, shorter than one clip")
     log.info("Source: %s (%.1f min, %d chat messages)",
