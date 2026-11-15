@@ -16,7 +16,7 @@ CHUNK = 10 * 1024 * 1024  # TikTok allows 5-64 MB per chunk
 
 def auth_url():
     return AUTH_URL + "?" + urllib.parse.urlencode({
-        "client_key": config.env("TT_CLIENT_KEY"), "scope": "video.publish,video.list",
+        "client_key": config.env("TT_CLIENT_KEY"), "scope": config.env("TT_SCOPES", required=False) or "user.info.basic,video.publish",
         "response_type": "code", "redirect_uri": config.env("TT_REDIRECT_URI"),
         "state": "autopost"})
 
