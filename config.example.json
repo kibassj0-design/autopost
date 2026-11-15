@@ -22,6 +22,7 @@
   "youtube_mode": "short",
   "youtube_privacy": "public",
   "tiktok_privacy": "PUBLIC_TO_EVERYONE",
+  "tiktok_mode": "direct",
   "watch_interval_seconds": 30,
   "min_minutes_between_posts": 90,
   "clipper": {

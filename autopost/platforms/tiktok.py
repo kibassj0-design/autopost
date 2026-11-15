@@ -76,6 +76,8 @@ def _call(path, payload, what, params=None):
 
 def publish(path, text, cfg):
     from . import PlatformError, check
+    if cfg.get("tiktok_mode") == "draft":
+        return _upload_draft(path, text, cfg)
     creator = _call("/post/publish/creator_info/query/", {}, "TikTok creator info")
     options = creator.get("privacy_level_options", [])
     privacy = cfg["tiktok_privacy"]
@@ -85,9 +87,7 @@ def publish(path, text, cfg):
                     privacy, options[0] if options else "SELF_ONLY")
         privacy = options[0] if options else "SELF_ONLY"
 
-    size = os.path.getsize(path)
-    chunk = size if size < CHUNK else CHUNK
-    count = max(1, size // chunk)  # the last chunk carries the remainder
+    size, chunk, count = _chunks(path)
     init = _call("/post/publish/video/init/", {
         "post_info": {"title": text["caption"], "privacy_level": privacy,
                       "disable_comment": bool(creator.get("comment_disabled")),
@@ -97,15 +97,7 @@ def publish(path, text, cfg):
                         "chunk_size": chunk, "total_chunk_count": count},
     }, "TikTok upload init")
 
-    with open(path, "rb") as f:
-        for i in range(count):
-            start = i * chunk
-            end = size - 1 if i == count - 1 else start + chunk - 1
-            f.seek(start)
-            check(requests.put(init["upload_url"], data=f.read(end - start + 1), timeout=900,
-                               headers={"Content-Type": "video/mp4",
-                                        "Content-Range": f"bytes {start}-{end}/{size}"}),
-                  "TikTok upload")
+    _send(path, init["upload_url"], size, chunk, count)
 
     publish_id = init["publish_id"]
     for _ in range(60):
@@ -120,6 +112,26 @@ def publish(path, text, cfg):
     raise PlatformError("TikTok was still processing the video after 5 minutes")
 
 
+def _chunks(path):
+    size = os.path.getsize(path)
+    chunk = size if size < CHUNK else CHUNK
+    return size, chunk, max(1, size // chunk)  # the last chunk carries the remainder
+
+
+def _send(path, url, size, chunk, count):
+    from . import check
+    with open(path, "rb") as f:
+        for i in range(count):
+            start = i * chunk
+            end = size - 1 if i == count - 1 else start + chunk - 1
+            f.seek(start)
+            check(requests.put(url, data=f.read(end - start + 1), timeout=900,
+                               headers={"Content-Type": "video/mp4",
+                                        "Content-Range": f"bytes {start}-{end}/{size}"}),
+                  "TikTok upload")
+
+
+
 def stats(remote_id):
     data = _call("/video/query/", {"filters": {"video_ids": [remote_id]}}, "TikTok stats",
                  params={"fields": "id,view_count,like_count,comment_count,share_count"})
@@ -129,3 +141,27 @@ def stats(remote_id):
     v = videos[0]
     return {"views": v.get("view_count", 0), "likes": v.get("like_count", 0),
             "comments": v.get("comment_count", 0), "shares": v.get("share_count", 0)}
+
+
+def _upload_draft(path, text, cfg):
+    """Send the video to the creator's TikTok inbox. They post it from the app with
+    one tap, publicly, which needs no app audit. The caption goes in the app's notes."""
+    from . import PlatformError
+    size, chunk, count = _chunks(path)
+    init = _call("/post/publish/inbox/video/init/", {
+        "source_info": {"source": "FILE_UPLOAD", "video_size": size,
+                        "chunk_size": chunk, "total_chunk_count": count},
+    }, "TikTok draft init")
+    _send(path, init["upload_url"], size, chunk, count)
+    for _ in range(60):
+        st = _call("/post/publish/status/fetch/", {"publish_id": init["publish_id"]},
+                   "TikTok status")
+        if st["status"] in ("SEND_TO_USER_INBOX", "PUBLISH_COMPLETE"):
+            log.info("TikTok: sent to your inbox. Open TikTok and post it. Caption: %s",
+                     text["caption"][:300])
+            return None, None
+        if st["status"] == "FAILED":
+            raise PlatformError(f"TikTok rejected the video: {st.get('fail_reason')}")
+        time.sleep(5)
+    raise PlatformError("TikTok was still processing the video after 5 minutes")
+

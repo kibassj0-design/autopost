@@ -32,7 +32,7 @@ PLAIN_KEYS = ["YT_CLIENT_ID", "IG_USER_ID", "IG_GRAPH_HOST", "TT_CLIENT_KEY",
 SETTINGS = {
     "platforms": list, "language": str, "post_language": str, "niche": str, "brand_voice": str,
     "default_hashtags": list, "orientation": str, "ai_provider": str,
-    "min_minutes_between_posts": int, "fps": int, "youtube_mode": str,
+    "min_minutes_between_posts": int, "fps": int, "youtube_mode": str, "tiktok_mode": str,
     "clipper.min_score": int, "clipper.min_seconds": int, "clipper.max_seconds": int,
     "clipper.whisper_model": str, "clipper.whisper_device": str, "clipper.captions": bool,
     "clipper.captions_language": str, "clipper.layout": str,
