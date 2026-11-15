@@ -201,7 +201,7 @@
       <ol class="steps">
         <li>افتح <a href="https://developers.tiktok.com/apps" target="_blank" rel="noopener">developers.tiktok.com/apps</a> ← أنشئ تطبيقا واملأ بياناته.</li>
         <li><b>Add products</b>: أضف <b>Login Kit</b> و <b>Content Posting API</b>، وفعّل <b>Direct Post</b>. في <b>Scopes</b> فعّل <code>video.publish</code> و <code>video.list</code>.</li>
-        <li>في Login Kit ضع <b>Redirect URI</b> يبدأ بـ https (مثلا رابط مستودعك على GitHub)، وضع نفس الرابط هنا بالحرف.</li>
+        <li>في Login Kit ضع <b>Redirect URI</b> صفحة GitHub Pages الخاصة بمستودعك (مثل <code>https://اسمك.github.io/autopost/</code>)، وضع نفس الرابط هنا بالحرف.</li>
         <li>في <b>Sandbox ← Target users</b> أضف حسابك، ثم الصق Client key و Client secret واضغط ربط.</li>
       </ol>
       <div class="row">
@@ -209,7 +209,7 @@
         <div class="field"><label>Client secret</label><input data-key="TT_CLIENT_SECRET" dir="ltr" type="password" autocomplete="off"></div>
       </div>
       <div class="row">
-        <div class="grow"><label>Redirect URI</label><input data-key="TT_REDIRECT_URI" dir="ltr" autocomplete="off" placeholder="https://github.com/..."></div>
+        <div class="grow"><label>Redirect URI</label><input data-key="TT_REDIRECT_URI" dir="ltr" autocomplete="off" placeholder="https://kibassj0-design.github.io/autopost/"></div>
         <button class="btn primary" data-auth="tiktok">ربط تيك توك</button>
       </div>
       <div id="tt-finish" class="finish" hidden>
