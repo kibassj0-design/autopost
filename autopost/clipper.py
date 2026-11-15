@@ -56,7 +56,13 @@ def download(url, work, max_height, start=None, end=None, tell=lambda *a: None):
             None, [(start or 0, end or float("inf"))])
     log.info("Downloading %s", url)
     with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+        # A live channel never ends, so the download would never finish.
+        probe = ydl.extract_info(url, download=False)
+        if probe.get("is_live") or probe.get("live_status") in ("is_live", "is_upcoming"):
+            raise RuntimeError(
+                "هذا بث مباشر لم ينتهِ. افتح تبويب Videos (الفيديوهات) في القناة وانسخ رابط "
+                "البث المسجل (twitch.tv/videos/...)، أو انتظر نهاية البث.")
+        info = ydl.process_ie_result(probe, download=True)
     path = next(p for p in work.glob("source.*") if p.suffix in (".mp4", ".mkv", ".webm"))
     meta = {"title": info.get("title") or "", "url": info.get("webpage_url") or url,
             "channel": info.get("uploader") or info.get("channel") or ""}
