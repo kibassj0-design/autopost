@@ -160,12 +160,14 @@ def hype_curve(levels, chat):
     return np.convolve(score, np.ones(15) / 15, "same")
 
 
-def top_peaks(curve, count, gap):
+def top_peaks(curve, count, gap, floor=None):
     """Highest points of the curve, at least `gap` seconds apart."""
     import numpy as np
 
     peaks = []
     for i in np.argsort(curve)[::-1]:
+        if floor is not None and peaks and curve[i] < floor:
+            break  # the rest is ordinary footage, not a moment
         if all(abs(int(i) - p) >= gap for p in peaks):
             peaks.append(int(i))
             if len(peaks) == count:
@@ -280,6 +282,12 @@ def pick_with_ai(segments, peaks, chat_peaks, meta, duration, c, cfg):
         f"Find up to {c['count']} clips, each between {c['min_seconds']} and "
         f"{c['max_seconds']} seconds long.",
     ]
+    if c.get("auto"):
+        brief.append(
+            "How many is up to the video: return only moments strong enough to pull views "
+            "on their own (hype, shock, big laughs, clutch plays, heated or surprising "
+            f"lines), each scored honestly. A score under {c['min_score']} will be dropped, "
+            "so don't pad the list; a dull video may have just one or two.")
     if peaks:
         brief.append("Loud moments (seconds): " + ", ".join(map(str, sorted(peaks))))
     if chat_peaks:
@@ -295,7 +303,8 @@ def pick_by_signals(curve, meta, c):
     """No transcript or no Claude: take the hype peaks, with lead-in before each."""
     length = (c["min_seconds"] + c["max_seconds"]) / 2
     clips = []
-    for rank, peak in enumerate(top_peaks(curve, c["count"], c["max_seconds"])):
+    floor = 1.0 if c.get("auto") else None  # a clear spike above the video's norm
+    for rank, peak in enumerate(top_peaks(curve, c["count"], c["max_seconds"], floor)):
         start = max(0.0, peak - length * 0.6)
         clips.append({"start": start, "end": start + length, "score": 50 - rank,
                       "title": f"{meta['title']} #{rank + 1}".strip(),
@@ -557,6 +566,7 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
     c = dict(cfg["clipper"])
     if count:
         c["count"] = count
+    c["auto"] = not c["count"]  # 0 = as many as the video has strong moments
     job = time.strftime("%Y%m%d-%H%M%S")
     work = config.DATA / "clips" / job
     out_dir = work / "out"
@@ -566,6 +576,8 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
     src, meta, chat = download(url, work, c["max_height"], parse_time(start),
                                parse_time(end), tell)
     info = video.probe(src)
+    if c["auto"]:  # a ceiling only: weak moments are dropped by score below
+        c["count"] = int(min(30, max(3, info["duration"] // 120)))
     if info["duration"] < c["min_seconds"]:
         raise RuntimeError(f"The video is only {info['duration']:.0f}s, shorter than one clip")
     log.info("Source: %s (%.1f min, %d chat messages)",
@@ -603,6 +615,12 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
         if not len(curve):
             raise RuntimeError("No audio, transcript or chat to find moments with")
         clips = pick_by_signals(curve, meta, c)
+    if c["auto"] and len(clips) > 1:
+        strong = [k for k in clips if k["score"] >= c["min_score"]]
+        if len(strong) < len(clips):
+            log.info("Keeping %d strong moment(s) of %d (score >= %d)",
+                     max(len(strong), 1), len(clips), c["min_score"])
+        clips = strong or sorted(clips, key=lambda k: -k["score"])[:1]
     clips = fit_clips(clips, segments, info["duration"], c)
     if not clips:
         raise RuntimeError("No usable moments found in this video")

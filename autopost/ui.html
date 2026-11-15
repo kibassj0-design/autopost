@@ -244,7 +244,8 @@
     <div class="card">
       <h2>المقاطع</h2>
       <div class="row">
-        <div class="field small"><label>عدد المقاطع لكل رابط</label><input data-set="clipper.count" type="number" min="1" max="30"></div>
+        <div class="field"><label>عدد المقاطع لكل رابط</label><select data-set="clipper.count"><option value="0">تلقائي: كل مشهد قوي يجيب مشاهدات</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option><option>15</option><option>20</option></select></div>
+        <div class="field small"><label>قوة المشهد المطلوبة (تلقائي)</label><select data-set="clipper.min_score"><option value="60">عادية</option><option value="70">قوية</option><option value="80">قوية جدا فقط</option></select></div>
         <div class="field small"><label>أقل مدة (ثانية)</label><input data-set="clipper.min_seconds" type="number" min="5" max="180"></div>
         <div class="field small"><label>أقصى مدة (ثانية)</label><input data-set="clipper.max_seconds" type="number" min="5" max="180"></div>
         <div class="field small"><label>الإطارات بالثانية</label><select data-set="fps"><option value="60">60</option><option value="30">30</option></select></div>
@@ -507,7 +508,7 @@ function collectSettings() {
     const name = i.dataset.set;
     if (i.type === "checkbox") values[name] = i.checked;
     else if (name === "default_hashtags") values[name] = i.value.split(/\s+/).filter(Boolean);
-    else if (i.type === "number" || name === "fps") { if (i.value !== "") values[name] = Number(i.value); }
+    else if (i.type === "number" || ["fps", "clipper.count", "clipper.min_score"].includes(name)) { if (i.value !== "") values[name] = Number(i.value); }
     else values[name] = i.value;
   });
   values.platforms = $$("[data-platform]").filter(i => i.checked).map(i => i.dataset.platform);

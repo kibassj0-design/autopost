@@ -26,7 +26,8 @@ DEFAULTS = {
     "watch_interval_seconds": 30,
     "min_minutes_between_posts": 90,
     "clipper": {
-        "count": 6,
+        "count": 0,
+        "min_score": 70,
         "min_seconds": 30,
         "max_seconds": 80,
         "whisper_model": "small",
