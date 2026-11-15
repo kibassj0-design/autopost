@@ -5,7 +5,6 @@ import json
 import logging
 import mimetypes
 import os
-import queue
 import secrets
 import shutil
 import subprocess
@@ -32,7 +31,7 @@ PLAIN_KEYS = ["YT_CLIENT_ID", "IG_USER_ID", "IG_GRAPH_HOST", "TT_CLIENT_KEY",
 SETTINGS = {
     "platforms": list, "language": str, "post_language": str, "niche": str, "brand_voice": str,
     "default_hashtags": list, "orientation": str, "ai_provider": str,
-    "min_minutes_between_posts": int, "fps": int, "resolution": str, "youtube_mode": str, "tiktok_mode": str,
+    "min_minutes_between_posts": int, "fps": int, "resolution": str, "encoder": str, "youtube_mode": str, "tiktok_mode": str,
     "clipper.min_score": int, "clipper.min_seconds": int, "clipper.max_seconds": int,
     "clipper.whisper_model": str, "clipper.whisper_device": str, "clipper.captions": bool,
     "clipper.captions_language": str, "clipper.layout": str,
@@ -59,44 +58,58 @@ class App:
         logging.getLogger().addHandler(self.logs)
         self.publisher = Publisher(cfg)
         self.jobs = []
-        self.todo = queue.Queue()
+        self.stops = {}
         self.durations = {}
         threading.Thread(target=self.publisher.run_forever, daemon=True).start()
-        threading.Thread(target=self._work, daemon=True).start()
 
     # ---- clip jobs
 
     def add_job(self, url, count=None, start=None, end=None):
         job = {"id": len(self.jobs) + 1, "url": url, "title": "", "status": "queued",
                "stage": "queued", "fraction": None, "detail": "", "warnings": [],
-               "error": "", "clips": 0, "count": count, "start": start, "end": end}
+               "error": "", "clips": 0, "start": start, "end": end, "live": False,
+               "began": time.time(), "ended": None}
         self.jobs.append(job)
-        self.todo.put(job)
+        self.stops[job["id"]] = threading.Event()
+        # Each job has its own thread, so a live stream being followed doesn't hold up
+        # other links; the heavy part of each job still runs one at a time.
+        threading.Thread(target=self._work, args=(job,), daemon=True).start()
         return job
 
-    def _work(self):
+    def stop_job(self, job_id):
+        if job_id in self.stops:
+            self.stops[job_id].set()
+
+    def _work(self, job):
         from . import clipper
-        while True:
-            job = self.todo.get()
-            job["status"] = "running"
+        job["status"] = "running"
 
-            def progress(stage, fraction, detail, job=job):
-                if stage == "warning":
+        def progress(stage, fraction, detail, job=job):
+            if stage == "title":
+                job["title"] = detail
+                return
+            if stage == "warning":
+                if detail not in job["warnings"]:
                     job["warnings"].append(detail)
-                    return
-                job["stage"], job["fraction"] = stage, fraction
-                if stage in ("audio", "transcribe") and detail:
-                    job["title"] = detail
-                elif stage == "render":
-                    job["detail"] = detail
+                return
+            job["stage"], job["fraction"] = stage, fraction
+            if stage in ("audio", "transcribe") and detail and not job["live"]:
+                job["title"] = detail
+            elif stage == "live":
+                job["live"], job["detail"] = True, detail
+            elif stage == "render":
+                job["detail"] = detail
 
-            try:
-                clips = clipper.run(job["url"], self.cfg, count=job["count"],
-                                    start=job["start"], end=job["end"], progress=progress)
-                job.update(status="done", stage="done", fraction=1, clips=len(clips))
-            except Exception as e:
-                log.error("Could not process %s: %s", job["url"], e)
-                job.update(status="error", error=str(e)[:400])
+        try:
+            clips = clipper.run(job["url"], self.cfg, start=job["start"], end=job["end"],
+                                progress=progress, stop=self.stops[job["id"]])
+            job.update(status="done", stage="done", fraction=1, clips=len(clips))
+        except clipper.Cancelled:
+            job.update(status="cancelled", stage="cancelled")
+        except Exception as e:
+            log.error("Could not process %s: %s", job["url"], e)
+            job.update(status="error", error=str(e)[:400])
+        job["ended"] = time.time()
 
     # ---- state for the page
 
@@ -146,6 +159,7 @@ class App:
             "accounts": accounts,
             "enabled": self.cfg["platforms"],
             "ai": llm.providers(self.cfg),
+            "encoder": video.encoder()[0],
             "logs": list(self.logs.lines)[-200:],
         }
 
@@ -208,6 +222,13 @@ class App:
             raise ValueError("youtube_mode: short / both / video")
         if changes.get("clipper", {}).get("whisper_device") not in (None, "cpu", "gpu"):
             raise ValueError("whisper_device: cpu / gpu")
+        if changes.get("encoder") not in (None, "auto", "cpu"):
+            raise ValueError("encoder: auto / cpu")
+        if changes.get("encoder"):
+            video.QUALITY["encoder"] = changes["encoder"]
+            video._encoder = None  # test again with the new choice
+        if changes.get("resolution"):
+            video.QUALITY["resolution"] = str(changes["resolution"])
         if changes.get("fps") not in (None, 30, 60):
             raise ValueError("عدد الإطارات: 30 أو 60.")
         if changes:
@@ -376,6 +397,16 @@ def make_handler(app):
             elif path == "/api/queue/publish":
                 pub.publish_now(body.get("name"))
                 pub.paused = False
+            elif path == "/api/job/stop":
+                app.stop_job(int(body["id"]))
+            elif path == "/api/jobs/clear":
+                app.jobs = [j for j in app.jobs if j["status"] in ("queued", "running")]
+            elif path == "/api/queue/clear":
+                for item in pub.queued():
+                    try:
+                        pub.delete(item.name)
+                    except RuntimeError:
+                        pass  # the one being published right now stays
             elif path == "/api/queue/delete":
                 pub.delete(body["name"])
             elif path == "/api/check":

@@ -137,7 +137,11 @@
       <div id="go-msg"></div>
     </div>
     <div class="card">
-      <h2>الشغل الجاري</h2>
+      <div class="row" style="align-items:center;margin-bottom:10px">
+        <h2 style="margin:0" class="grow">الشغل الجاري</h2>
+        <span class="muted small" id="encoder"></span>
+        <button class="btn sm" id="clear-jobs">مسح المنتهية</button>
+      </div>
       <div id="jobs"><div class="empty">لا يوجد شغل بعد. الصق رابطا في الأعلى.</div></div>
     </div>
     <div class="card">
@@ -145,6 +149,7 @@
         <h2 style="margin:0" class="grow">طابور النشر</h2>
         <button class="btn sm" id="folder">فتح المجلد</button>
         <button class="btn sm" id="pause"></button>
+        <button class="btn sm danger" id="clear-queue">حذف الكل</button>
       </div>
       <div class="muted small" id="pubstatus"></div>
       <div id="queue" style="margin-top:12px"></div>
@@ -246,7 +251,8 @@
         <div class="field small"><label>المقاطع: كل مشهد بهذه القوة أو أكثر</label><select data-set="clipper.min_score"><option value="60">عادية</option><option value="70">قوية</option><option value="80">قوية جدا فقط</option></select></div>
         <div class="field small"><label>أقل مدة (ثانية)</label><input data-set="clipper.min_seconds" type="number" min="5" max="180"></div>
         <div class="field small"><label>أقصى مدة (ثانية)</label><input data-set="clipper.max_seconds" type="number" min="5" max="180"></div>
-        <div class="field small"><label>الدقة</label><select data-set="resolution"><option value="auto">أعلى جودة: 2K إن وُجد، ثم 1080p</option><option value="1080">1080p كحد أقصى</option></select></div>
+        <div class="field small"><label>الدقة</label><select data-set="resolution"><option value="1080">1080p (ثابتة، الأسرع)</option><option value="1440">2K إن وُجد (أبطأ)</option></select></div>
+        <div class="field small"><label>الترميز</label><select data-set="encoder"><option value="auto">تلقائي: كرت الشاشة إن وُجد</option><option value="cpu">المعالج فقط</option></select></div>
         <div class="field small"><label>الإطارات بالثانية</label><select data-set="fps"><option value="60">60</option><option value="30">30</option></select></div>
         <div class="field"><label>اتجاه الفيديو</label><select data-set="orientation"><option value="original">نفس اتجاه المصدر</option><option value="vertical">طولي دائما (9:16)</option></select></div>
       </div>
@@ -302,7 +308,8 @@
 const TOKEN = "__TOKEN__";
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const STAGES = { queued: "بالانتظار", download: "تنزيل الفيديو", audio: "تجهيز الصوت",
+const STAGES = { queued: "بالانتظار", waiting: "بانتظار انتهاء الرابط السابق", live: "يتابع البث المباشر",
+  cancelled: "أُلغي", download: "تنزيل الفيديو", audio: "تجهيز الصوت",
   transcribe: "تفريغ الكلام", pick: "اختيار أفضل اللحظات", translate: "ترجمة الكتابة",
   render: "تصيير المقاطع", done: "اكتمل" };
 const WARNINGS = { no_captions: "المقاطع بدون كتابة: فشل تفريغ الكلام",
@@ -386,16 +393,27 @@ function render() {
     let label = STAGES[j.stage] || j.stage;
     if (j.stage === "render" && j.detail) label += " " + j.detail;
     if (running && j.fraction != null && j.stage !== "render") label += " " + Math.round(j.fraction * 100) + "%";
+    if (j.stage === "live" && j.detail) label += ": " + j.detail.replace("min", "دقيقة مسجلة").replace("clips", "مقطع");
+    if (j.stage === "download" && j.detail === "sections") label = "تنزيل مقاطع اللحظات فقط";
     if (j.status === "done") label = "اكتمل: " + j.clips + " مقطع في الطابور";
     if (j.status === "error") label = "فشل";
+    if (j.status === "cancelled") label = "أُلغي";
+    const secs = Math.max(0, Math.round(((j.ended || s.publisher.now) - j.began)));
+    label += " · " + Math.floor(secs / 60) + ":" + String(secs % 60).padStart(2, "0");
+    const active = running || j.status === "queued";
     const bar = el("div", { class: "bar" + (running && j.fraction == null ? " busy" : "") }, el("i"));
     if (j.fraction != null) bar.firstChild.style.width = Math.round(j.fraction * 100) + "%";
     return el("div", { class: "item" }, [
       el("div", { class: "top" }, [
         el("div", { class: "title" }, [
           el("div", { text: j.title || j.url, class: j.title ? "" : "ltr" }),
-          el("div", { class: "muted small", text: label })])]),
-      (running || j.status === "queued") ? bar : null,
+          el("div", { class: "muted small", text: label })]),
+        active ? el("button", { class: "btn sm danger", text: j.live ? "إيقاف البث" : "إلغاء",
+          onclick: () => {
+            const ask = j.live ? "إيقاف متابعة البث؟ الدقائق المسجلة حتى الآن تُقص كالعادة." : "إلغاء هذا الرابط؟";
+            if (confirm(ask)) act("/api/job/stop", { id: j.id });
+          } }) : null]),
+      active ? bar : null,
       j.error ? note(j.error, "bad") : null,
       ...j.warnings.map(w => {
         const [code, ...rest] = w.split(": ");
@@ -405,6 +423,10 @@ function render() {
         return n;
       })]);
   }));
+
+  $("#encoder").textContent = "الترميز: " + (s.encoder === "libx264" ? "المعالج" : "كرت الشاشة (" + s.encoder.replace("h264_", "") + ")");
+  $("#clear-queue").hidden = !s.queue.length;
+  $("#clear-jobs").hidden = !s.jobs.some(j => !["queued", "running"].includes(j.status));
 
   // queue
   const p = s.publisher;
@@ -470,6 +492,11 @@ $("#go").addEventListener("click", async () => {
 });
 $("#url").addEventListener("keydown", e => { if (e.key === "Enter") $("#go").click(); });
 $("#pause").addEventListener("click", () => act("/api/publisher", { paused: !state.publisher.paused }));
+$("#clear-jobs").addEventListener("click", () => act("/api/jobs/clear", {}));
+$("#clear-queue").addEventListener("click", () => {
+  if (state && state.queue.length && confirm("حذف كل المقاطع (" + state.queue.length + ") من الطابور نهائيا؟"))
+    act("/api/queue/clear", {});
+});
 $("#folder").addEventListener("click", () => act("/api/open-folder", { folder: "inbox" }));
 
 function play(name) {

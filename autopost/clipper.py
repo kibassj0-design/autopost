@@ -6,6 +6,7 @@ streams: loudness spikes and chat-message spikes.
 """
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -32,40 +33,68 @@ def parse_time(value):
     return seconds
 
 
-def download(url, work, max_height, start=None, end=None, tell=lambda *a: None):
-    """Returns (video path, {title, channel, url}, chat timestamps in seconds)."""
+class Cancelled(RuntimeError):
+    pass
+
+
+SECTIONS_FROM = 15 * 60  # longer remote videos: fetch only the clips' sections
+
+
+def _ydl_opts(work, tell, **extra):
+    return {"noplaylist": True, "quiet": True, "no_warnings": True, "noprogress": True,
+            "js_runtimes": js_runtimes(), "outtmpl": str(work / "source.%(ext)s"),
+            "progress_hooks": [lambda d: _download_progress(d, tell)], **extra}
+
+
+def probe_url(url):
+    """yt-dlp's description of a link, without downloading anything."""
+    import yt_dlp
+    with yt_dlp.YoutubeDL(_ydl_opts(Path("."), lambda *a: None)) as ydl:
+        return ydl.extract_info(url, download=False, process=False)
+
+
+def is_live(info):
+    return bool(info.get("is_live")) or info.get("live_status") in ("is_live", "is_upcoming")
+
+
+def _video_format(max_height):
+    # The highest resolution up to the limit, then the highest frame rate.
+    return {"format": "bv*+ba/b", "format_sort": [f"res:{max_height}", "fps"],
+            "merge_output_format": "mp4"}
+
+
+def download(url, work, max_height, start=None, end=None, tell=lambda *a: None, info=None):
+    """Returns (media path, {title, channel, url, duration, remote}, chat timestamps).
+
+    A long remote video is fetched as audio only (a small fraction of the size): the
+    moments are found from it, and only their sections are fetched in video later
+    (see fetch_sections). Shorter videos and local files come whole."""
     local = Path(url).expanduser()
     if local.exists():
-        return local, {"title": local.stem, "channel": "", "url": ""}, []
+        return local, {"title": local.stem, "channel": "", "url": "", "remote": False}, []
 
     import yt_dlp
 
-    opts = {
-        "format": "bv*+ba/b",
-        # Best quality first: the highest resolution up to the limit, then the
-        # highest frame rate (so a 1080p60 stream is fetched as 1080p60).
-        "format_sort": [f"res:{max_height}", "fps"],
-        "merge_output_format": "mp4",
-        "outtmpl": str(work / "source.%(ext)s"),
-        "noplaylist": True, "quiet": True, "no_warnings": True,
-        "progress_hooks": [lambda d: _download_progress(d, tell)],
-        "js_runtimes": js_runtimes(),
-    }
+    info = info or probe_url(url)
+    if is_live(info):
+        raise RuntimeError("live")  # handled by run_live
+    duration = float(info.get("duration") or 0)
+    if start is not None or end is not None:
+        duration = (end or duration) - (start or 0)
+    audio_only = duration >= SECTIONS_FROM and start is None and end is None
+    opts = _ydl_opts(work, tell, **({"format": "bestaudio/best"} if audio_only
+                                    else _video_format(max_height)))
     if start is not None or end is not None:
         opts["download_ranges"] = yt_dlp.utils.download_range_func(
             None, [(start or 0, end or float("inf"))])
-    log.info("Downloading %s", url)
+    log.info("Downloading %s (%s)", url, "audio only; video sections come later"
+             if audio_only else "video")
     with yt_dlp.YoutubeDL(opts) as ydl:
-        # A live channel never ends, so the download would never finish.
-        probe = ydl.extract_info(url, download=False)
-        if probe.get("is_live") or probe.get("live_status") in ("is_live", "is_upcoming"):
-            raise RuntimeError(
-                "هذا بث مباشر لم ينتهِ. افتح تبويب Videos (الفيديوهات) في القناة وانسخ رابط "
-                "البث المسجل (twitch.tv/videos/...)، أو انتظر نهاية البث.")
-        info = ydl.process_ie_result(probe, download=True)
-    path = next(p for p in work.glob("source.*") if p.suffix in (".mp4", ".mkv", ".webm"))
+        info = ydl.process_ie_result(info, download=True)
+    path = next(p for p in work.glob("source.*") if not p.name.endswith((".part", ".ytdl")))
     meta = {"title": info.get("title") or "", "url": info.get("webpage_url") or url,
-            "channel": info.get("uploader") or info.get("channel") or ""}
+            "channel": info.get("uploader") or info.get("channel") or "",
+            "remote": audio_only, "max_height": max_height, "info": info}
 
     chat = []
     try:  # chat replay is a bonus signal; many videos simply don't have one
@@ -79,6 +108,39 @@ def download(url, work, max_height, start=None, end=None, tell=lambda *a: None):
     except Exception as e:
         log.info("No chat replay (%s)", str(e)[:120])
     return path, meta, chat
+
+
+def fetch_sections(meta, clips, work, tell=lambda *a: None):
+    """Download just the clips' stretches in video. Returns {clip index: (file, offset)}
+    where offset is the source time at which that file starts."""
+    import yt_dlp
+
+    ranges = [(max(0.0, k["start"] - 1), k["end"] + 1) for k in clips]
+    secdir = work / "sections"
+    secdir.mkdir(exist_ok=True)
+    opts = _ydl_opts(work, tell, **_video_format(meta["max_height"]))
+    opts.update({
+        "outtmpl": str(secdir / "s%(section_start)09.3f.%(ext)s"),
+        "download_ranges": yt_dlp.utils.download_range_func(None, ranges),
+        # Exact cut points, so caption timing lines up with the clip.
+        "force_keyframes_at_cuts": True,
+    })
+    log.info("Downloading %d video section(s) instead of the whole video", len(ranges))
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.process_ie_result(meta["info"], download=True)
+    files = {}
+    for path in secdir.iterdir():
+        m = re.match(r"s(\d+\.\d+)\.", path.name)
+        if m and not path.name.endswith((".part", ".ytdl")):
+            files[round(float(m.group(1)), 1)] = path
+    out = {}
+    for i, (start, _) in enumerate(ranges):
+        hit = files.get(round(start, 1))
+        if hit:
+            out[i] = (hit, start)
+    if len(out) < len(ranges):
+        raise RuntimeError(f"only {len(out)} of {len(ranges)} sections downloaded")
+    return out
 
 
 def js_runtimes():
@@ -214,11 +276,30 @@ def _transcribe(wav, model_name, language, tell, device, compute_type):
     from faster_whisper import WhisperModel
 
     log.info("Transcribing with whisper '%s' (first run downloads the model)", model_name)
-    model = WhisperModel(model_name, device=device, compute_type=compute_type)
+    model = WhisperModel(model_name, device=device, compute_type=compute_type,
+                         cpu_threads=os.cpu_count() or 4)
     # Hand over the samples ourselves: faster-whisper's own file reader uses PyAV,
     # and newer PyAV releases break it ("unexpected keyword argument 'metadata_errors'").
-    segments, info = model.transcribe(read_wav(wav), language=language,
+    audio = read_wav(wav)
+    try:
+        # Batched decoding of the speech parts, one beam: several times faster than
+        # the default, with nearly the same text.
+        from faster_whisper import BatchedInferencePipeline
+        segments, info = BatchedInferencePipeline(model=model).transcribe(
+            audio, language=language, word_timestamps=True, beam_size=1,
+            batch_size=8 if device == "cpu" else 16)
+        return _collect(segments, info, tell), info.language
+    except Cancelled:
+        raise
+    except Exception as e:  # an older or newer faster-whisper: the plain way works too
+        log.info("Batched transcription unavailable (%s); using the standard one",
+                 str(e)[:120])
+    segments, info = model.transcribe(audio, language=language, beam_size=1,
                                       word_timestamps=True, vad_filter=True)
+    return _collect(segments, info, tell), info.language
+
+
+def _collect(segments, info, tell):
     out, last_log = [], time.time()
     for s in segments:
         out.append({"start": s.start, "end": s.end, "text": s.text.strip(),
@@ -229,7 +310,7 @@ def _transcribe(wav, model_name, language, tell, device, compute_type):
         if time.time() - last_log > 30:
             log.info("  transcribed %.0f of %.0f min", s.end / 60, info.duration / 60)
             last_log = time.time()
-    return out, info.language
+    return out
 
 
 # ---------------------------------------------------------------- choosing moments
@@ -352,7 +433,7 @@ def fit_clips(clips, segments, duration, c):
 
 # ---------------------------------------------------------------- caption translation
 
-LANG_NAMES = {"ar": "Arabic", "en": "English"}
+LANG_NAMES = {"ar": "Modern Standard Arabic (الفصحى)", "en": "standard English"}
 
 TRANSLATE_SCHEMA = {
     "type": "object",
@@ -368,9 +449,12 @@ TRANSLATE_SCHEMA = {
 
 TRANSLATE_SYSTEM = """You translate the spoken lines of a video into subtitles that get \
 burned onto short social clips. Viewers read them in a second or two while watching, so \
-translate the way a native speaker would say it out loud: natural, colloquial where the \
-speaker is colloquial, and no longer than the original. Keep names, game terms and brand \
-names as they are commonly written by speakers of the target language. Speech-recognition \
+keep them short and clear, no longer than the original. Use the standard written form of \
+the target language for every line: Arabic in Modern Standard Arabic (الفصحى), never a \
+dialect, even when the speaker is casual or swears; English in plain standard English. \
+Every line must be entirely in the target language: no words left in the source \
+language and no mixing, except names, game titles and brands, written the way readers of \
+the target language usually write them. Speech-recognition \
 mistakes are common in the input; when a word is clearly a mishearing, translate what was \
 meant. Return exactly one translated line for every numbered input line, with the same \
 number, and never merge or split lines, because each line is shown at its own time."""
@@ -533,8 +617,8 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
         graph = chain + ";[1:a]anull[a]"
     cmd += ["-t", f"{end - start:.3f}", "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
-            "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+            "-r", str(video.out_fps(meta, fps)), *video.encoder()[1],
+            "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
             "-movflags", "+faststart", out.name]
     # Run inside the output folder so the subtitle filter needs no path escaping.
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=out.parent)
@@ -563,36 +647,104 @@ def _note(clip, meta, segments, spoken_lang=None):
     return "\n".join(lines)
 
 
-def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
+def _audio_info(path):
+    """Duration and audio codec of any media file (it may have no video)."""
+    data = json.loads(video._run(["ffprobe", "-v", "error", "-print_format", "json",
+                                  "-show_format", "-show_streams", str(path)]))
+    audio = next((x for x in data["streams"] if x["codec_type"] == "audio"), None)
+    return {"duration": float(data["format"].get("duration") or 0),
+            "acodec": audio.get("codec_name") if audio else None}
+
+
+def _shift(segments, offset):
+    """Segments with times moved by -offset (for a file that starts at `offset`)."""
+    return [{**x, "start": x["start"] - offset, "end": x["end"] - offset,
+             "words": [{**w, "start": w["start"] - offset, "end": w["end"] - offset}
+                       for w in x["words"]]} for x in segments]
+
+
+def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, stop=None):
     """Returns the list of finished clip files (already in inbox/ when queue=True).
-    `progress(stage, fraction, detail)` is called as the work moves along."""
+    `progress(stage, fraction, detail)` is called as the work moves along. A live
+    channel is followed until it ends or `stop` (a threading.Event) is set."""
+    live = {"on": False}
+
     def tell(stage, fraction=None, detail=""):
+        # Cancelling a normal job stops it at the next progress report (downloads
+        # report many times a second). A live job finishes its last chunk instead.
+        if stop is not None and stop.is_set() and not live["on"]:
+            raise Cancelled("cancelled")
         if progress:
             progress(stage, fraction, detail)
 
-    c = dict(cfg["clipper"])
-    # Always as many clips as the video has strong moments: a 30-minute video with
-    # two great moments gives two clips, one with ten gives ten. `count` is ignored.
-    c["auto"] = True
     job = time.strftime("%Y%m%d-%H%M%S")
     work = config.DATA / "clips" / job
-    out_dir = work / "out"
-    out_dir.mkdir(parents=True)
+    work.mkdir(parents=True)
+    max_height = 1440 if str(cfg.get("resolution")) == "1440" else 1080
+
+    info = None
+    if not Path(url).expanduser().exists():
+        tell("download", 0)
+        info = probe_url(url)
+        if is_live(info):
+            live["on"] = True
+            return run_live(info, cfg, work, tell, stop, queue)
 
     tell("download", 0)
-    # Fetch up to 2K so clips can come out at 1080p or 1440p, never lower.
-    src, meta, chat = download(url, work, max(c["max_height"], 1440), parse_time(start),
-                               parse_time(end), tell)
-    info = video.probe(src)
-    if c["auto"]:  # a ceiling only: weak moments are dropped by score below
-        # No real limit: as many as could fit without overlapping (100 at most).
-        c["count"] = int(min(100, max(1, info["duration"] // c["min_seconds"])))
+    try:
+        src, meta, chat = download(url, work, max_height, parse_time(start), parse_time(end),
+                                   tell, info)
+        return process(src, meta, chat, cfg, work, tell, queue)
+    except Exception as e:
+        if stop is not None and stop.is_set():
+            log.info("Cancelled: %s", url)
+            raise Cancelled("cancelled") from e
+        raise
+    finally:
+        # Downloads are large; the finished clips are already in inbox/ (or, when not
+        # queued, in this job's out/ folder, which is kept).
+        for item in work.iterdir() if work.exists() else []:
+            if queue or item.name != "out":
+                shutil.rmtree(item, ignore_errors=True) if item.is_dir() else item.unlink()
+        if queue:
+            shutil.rmtree(work, ignore_errors=True)
+
+
+import threading as _threading
+
+# One clip job uses the whole processor; two at once would each take twice as long.
+# Downloads and live recording go on in parallel, only this part waits its turn.
+PROCESS_LOCK = _threading.Lock()
+
+
+def process(src, meta, chat, cfg, work, tell, queue=True, part=""):
+    """Find the strong moments in `src` and turn each into a finished clip."""
+    if not PROCESS_LOCK.acquire(blocking=False):
+        tell("waiting")
+        PROCESS_LOCK.acquire()
+    try:
+        return _process(src, meta, chat, cfg, work, tell, queue, part)
+    finally:
+        PROCESS_LOCK.release()
+
+
+def _process(src, meta, chat, cfg, work, tell, queue, part):
+    c = dict(cfg["clipper"])
+    # Always as many clips as the video has strong moments: a 30-minute video with
+    # two great moments gives two clips, one with ten gives ten.
+    c["auto"] = True
+    out_dir = work / "out"
+    out_dir.mkdir(exist_ok=True)
+    remote = meta.get("remote")
+    info = _audio_info(src) if remote else video.probe(src)
+    # No real limit: as many as could fit without overlapping (100 at most).
+    c["count"] = int(min(100, max(1, info["duration"] // c["min_seconds"])))
     if info["duration"] < c["min_seconds"]:
         raise RuntimeError(f"The video is only {info['duration']:.0f}s, shorter than one clip")
-    log.info("Source: %s (%.1f min, %d chat messages)",
-             meta["title"], info["duration"] / 60, len(chat))
+    log.info("Source: %s%s (%.1f min, %d chat messages)",
+             meta["title"], part, info["duration"] / 60, len(chat))
     tell("audio", None, meta["title"])
-    if min(info["width"], info["height"]) < 1000:
+    if not remote and min(info["width"], info["height"]) < 1000:
         log.warning("The best available source is only %dx%d; clips keep that size",
                     info["width"], info["height"])
         tell("warning", None, f"low_source: {info['width']}x{info['height']}")
@@ -606,7 +758,6 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
             segments, spoken = transcribe(wav, c["whisper_model"], c["language"], tell,
                                           c.get("whisper_device", "cpu"))
             log.info("Spoken language: %s, %d lines", spoken, len(segments))
-            (work / "transcript.json").write_text(json.dumps(segments, ensure_ascii=False))
         except Exception as e:
             log.warning("Transcription failed (%s). Continuing on audio/chat signals only, "
                         "without captions.", str(e)[:200])
@@ -628,7 +779,7 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
         if not len(curve):
             raise RuntimeError("No audio, transcript or chat to find moments with")
         clips = pick_by_signals(curve, meta, c)
-    if c["auto"] and len(clips) > 1:
+    if len(clips) > 1:
         strong = [k for k in clips if k["score"] >= c["min_score"]]
         if len(strong) < len(clips):
             log.info("Keeping %d strong moment(s) of %d (score >= %d)",
@@ -636,13 +787,14 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
         clips = strong or sorted(clips, key=lambda k: -k["score"])[:1]
     clips = fit_clips(clips, segments, info["duration"], c)
     if not clips:
-        raise RuntimeError("No usable moments found in this video")
+        log.info("No strong moment in %s%s", meta["title"], part)
+        return []
     if not info["acodec"]:
         log.warning("The source has no audio track; clips will be silent")
 
     # Captions go on in the other language (English speech -> Arabic text and the reverse).
-    caption_segments = [s for s in segments
-                        if any(s["end"] > k["start"] and s["start"] < k["end"] for k in clips)]
+    caption_segments = [x for x in segments
+                        if any(x["end"] > k["start"] and x["start"] < k["end"] for k in clips)]
     target = caption_target(spoken, c["captions_language"])
     if c["captions"] and caption_segments and target != spoken:
         tell("translate")
@@ -654,28 +806,44 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
                         "language", str(e)[:160])
             tell("warning", None, f"no_translation: {str(e)[:200]}")
 
+    sections = {}
+    if remote:
+        tell("download", None, "sections")
+        sections = fetch_sections(meta, clips, work, tell)
+
     slug = re.sub(r"[^\w]+", "-", meta["title"], flags=re.UNICODE).strip("-")[:40] or "clip"
+    stamp = work.name[-6:] + part.replace(" #", "-p")
     inbox = config.ROOT / "inbox"
+    enc = video.encoder()[0]
     finished = []
     for n, clip in enumerate(clips, 1):
-        out = out_dir / f"{slug}-{job[-6:]}-{n:02d}.mp4"
+        out = out_dir / f"{slug}-{stamp}-{n:02d}.mp4"
         tell("render", (n - 1) / len(clips), f"{n}/{len(clips)}")
-        layout = render(src, info, clip, caption_segments, out, c, cfg["orientation"],
-                        cfg["fps"])
+        began = time.time()
+        if remote:  # render from this clip's own section file
+            file, offset = sections[n - 1]
+            c_src, c_info = file, video.probe(file)
+            c_clip = {**clip, "start": clip["start"] - offset, "end": clip["end"] - offset}
+            c_caps = _shift(caption_segments, offset)
+            if n == 1 and min(c_info["width"], c_info["height"]) < 1000:
+                tell("warning", None, f"low_source: {c_info['width']}x{c_info['height']}")
+        else:
+            c_src, c_info, c_clip, c_caps = src, info, clip, caption_segments
+        layout = render(c_src, c_info, c_clip, c_caps, out, c, cfg["orientation"], cfg["fps"])
         # YouTube can take the other orientation of a landscape moment: a vertical
         # render uploads as a Short, a landscape one as a regular video.
         alt = None
-        wide_source = info["width"] > info["height"] * 1.1
+        wide_source = c_info["width"] > c_info["height"] * 1.1
         main_is_wide = wide_source and cfg["orientation"] == "original"
         mode = cfg["youtube_mode"]
         if wide_source and "youtube" in cfg["platforms"] and (
                 mode == "both" or (mode == "short" and main_is_wide)):
             alt = out.with_suffix(".alt.mp4")
-            render(src, info, clip, caption_segments, alt, c,
+            render(c_src, c_info, c_clip, c_caps, alt, c,
                    "vertical" if main_is_wide else "original", cfg["fps"])
-        log.info("Clip %d/%d: %.0fs-%.0fs (%.0fs, score %d, %s) %s", n, len(clips),
-                 clip["start"], clip["end"], clip["end"] - clip["start"], clip["score"],
-                 layout, clip["title"])
+        log.info("Clip %d/%d: %.0fs-%.0fs (%.0fs, score %d, %s) %s [%s, %.0fs]", n,
+                 len(clips), clip["start"], clip["end"], clip["end"] - clip["start"],
+                 clip["score"], layout, clip["title"], enc, time.time() - began)
         note = _note(clip, meta, segments, spoken)
         if queue:
             inbox.mkdir(exist_ok=True)
@@ -683,13 +851,131 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
             # Land the video under a name the watcher ignores, then rename in one step.
             if alt:
                 shutil.move(alt, inbox / alt.name)
-            part = inbox / (out.name + ".part")
-            shutil.move(out, part)
-            part.rename(inbox / out.name)
+            partial = inbox / (out.name + ".part")
+            shutil.move(out, partial)
+            partial.rename(inbox / out.name)
             finished.append(inbox / out.name)
         else:
             out.with_suffix(".txt").write_text(note, encoding="utf-8")
             finished.append(out)
-    if src.is_relative_to(work):
-        src.unlink()  # the download is large and the clips are what matter
+    if sections:
+        shutil.rmtree(work / "sections", ignore_errors=True)
+    return finished
+
+
+# ---------------------------------------------------------------- live streams
+
+LIVE_CHUNK = 5 * 60  # seconds of stream per batch of clips: the first clips come ~5 min in
+
+
+def _twitch_chat(channel, started, stamps, stop):
+    """Read-only anonymous Twitch chat: the time of every message, for hype spikes."""
+    import socket
+    try:
+        sock = socket.create_connection(("irc.chat.twitch.tv", 6667), timeout=30)
+        sock.sendall(f"NICK justinfan{int(time.time()) % 100000}\r\nJOIN #{channel}\r\n"
+                     .encode())
+        sock.settimeout(5)
+        buf = b""
+        while not stop.is_set():
+            try:
+                data = sock.recv(4096)
+            except socket.timeout:
+                continue
+            if not data:
+                break
+            buf += data
+            *lines, buf = buf.split(b"\r\n")
+            for line in lines:
+                if line.startswith(b"PING"):
+                    sock.sendall(b"PONG :tmi.twitch.tv\r\n")
+                elif b" PRIVMSG #" in line:
+                    stamps.append(time.time() - started)
+        sock.close()
+    except OSError as e:
+        log.info("Twitch chat not available (%s)", e)
+
+
+def run_live(info, cfg, work, tell, stop, queue=True):
+    """Record a live stream in chunks and make clips from each chunk while the
+    stream goes on, until it ends or `stop` is set."""
+    import threading
+
+    import yt_dlp
+
+    stop = stop or threading.Event()
+    max_height = 1440 if str(cfg.get("resolution")) == "1440" else 1080
+    with yt_dlp.YoutubeDL(_ydl_opts(work, tell, **{
+            "format": f"best[height<={max_height}]/best"})) as ydl:
+        chosen = ydl.process_ie_result(info, download=False)
+    stream = chosen.get("url") or info.get("url")
+    if not stream:
+        raise RuntimeError("Could not open the live stream")
+    title = info.get("title") or info.get("uploader") or "live"
+    meta = {"title": title, "channel": info.get("uploader") or info.get("channel") or "",
+            "url": info.get("webpage_url") or "", "remote": False}
+    log.info("Following live stream %s; clips every %d min", title, LIVE_CHUNK // 60)
+    tell("title", None, title)
+
+    rec = work / "live"
+    rec.mkdir()
+    started = time.time()
+    headers = "".join(f"{k}: {v}\r\n" for k, v in (chosen.get("http_headers") or {}).items())
+    cmd = ["ffmpeg", "-v", "error", "-y"]
+    if headers:
+        cmd += ["-headers", headers]
+    cmd += ["-i", stream, "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy", "-f", "segment",
+            "-segment_time", str(LIVE_CHUNK), "-reset_timestamps", "1",
+            str(rec / "chunk%04d.ts")]
+    errlog = open(work / "recorder.log", "wb")  # a file, so a chatty ffmpeg can't stall
+    recorder = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errlog)
+
+    stamps = []
+    host = (info.get("extractor_key") or "").lower()
+    if "twitch" in host and info.get("uploader_id"):
+        threading.Thread(target=_twitch_chat, args=(info["uploader_id"].lower(), started,
+                                                    stamps, stop), daemon=True).start()
+
+    finished, done_chunks = [], 0
+
+    def handle(path, index):
+        offset = index * LIVE_CHUNK
+        chat = [t - offset for t in stamps if offset <= t < offset + LIVE_CHUNK]
+        try:
+            finished.extend(process(path, meta, chat, cfg, work, tell, queue,
+                                    part=f" #{index + 1}"))
+        except Exception as e:
+            if path.exists() and video.probe(path)["duration"] < cfg["clipper"]["min_seconds"]:
+                log.info("Live chunk %d is too short for a clip", index + 1)
+            else:
+                log.error("Live chunk %d: %s", index + 1, e)
+        path.unlink(missing_ok=True)
+
+    while True:
+        # Check the recorder first: listing first could miss a chunk written just
+        # before it exits.
+        running = recorder.poll() is None
+        chunks = sorted(rec.glob("chunk*.ts"))
+        recorded = time.time() - started
+        tell("live", None, f"{int(recorded // 60)} min · {len(finished)} clips")
+        # A chunk is complete once the next one has started (or recording stopped).
+        ready = chunks if not running else chunks[:-1]
+        for path in ready:  # processed chunks are deleted, so these are all new
+            handle(path, int(path.stem.removeprefix("chunk")))
+            done_chunks += 1
+        if not running:
+            break
+        if stop.is_set():
+            try:  # "q" makes ffmpeg close the current chunk properly
+                recorder.communicate(b"q", timeout=20)
+            except subprocess.TimeoutExpired:
+                recorder.kill()
+            continue
+        time.sleep(5)
+    errlog.close()
+    if recorder.returncode not in (0, 255, None) and not finished and done_chunks == 0:
+        err = (work / "recorder.log").read_text(errors="replace")[-300:]
+        raise RuntimeError(f"Recording the stream failed: {err}")
+    stop.set()
+    log.info("Live stream done: %d clip(s)", len(finished))
     return finished

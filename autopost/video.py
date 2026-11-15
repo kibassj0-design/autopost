@@ -9,15 +9,15 @@ from pathlib import Path
 W, H = 1080, 1920
 
 
-QUALITY = {"resolution": "auto"}  # set from config.json by config.load()
+QUALITY = {"resolution": "1080", "encoder": "auto"}  # set by config.load()
 
 
 def short_side(meta, resolution=None):
-    """The output's short side: 2K or 1080p when the source has it, otherwise the
+    """The output's short side: 1080p (or 2K when chosen and available), otherwise the
     source's own size (a 720p source stays 720p). Never upscaled."""
     source = min(meta["width"], meta["height"])
     setting = str(resolution or QUALITY["resolution"])
-    want = int(setting) if setting in ("1080", "1440") else 1440
+    want = 1440 if setting == "1440" else 1080
     for size in (1440, 1080):
         if size <= want and source >= size - 40:  # a few pixels short still counts
             return size
@@ -45,6 +45,52 @@ def ensure_ffmpeg():
     except Exception as e:
         raise RuntimeError(f"ffmpeg is not installed and could not be fetched ({e}). "
                            "Install ffmpeg and try again.")
+
+
+def out_fps(meta, wanted=60):
+    """60 fps only when the source has it: doubling a 30 fps source costs twice the
+    encoding time and adds copied frames, not smoothness."""
+    source = meta.get("fps") or 30
+    if source >= wanted - 5:
+        return wanted
+    return 30 if source >= 25 else max(1, round(source))
+
+
+# Hardware encoders, best first, with settings close to x264 CRF 20 quality.
+_HW = [
+    ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "21",
+                    "-b:v", "0", "-pix_fmt", "yuv420p"]),
+    ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "faster", "-global_quality", "21",
+                  "-pix_fmt", "nv12"]),
+    ("h264_amf", ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "20",
+                  "-qp_p", "22", "-pix_fmt", "yuv420p"]),
+    ("h264_videotoolbox", ["-c:v", "h264_videotoolbox", "-q:v", "65",
+                           "-pix_fmt", "yuv420p"]),
+]
+_CPU = ("libx264", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                    "-pix_fmt", "yuv420p"])
+_encoder = None
+
+
+def encoder():
+    """(name, ffmpeg args). The graphics card's encoder when one really works on this
+    machine (tested with a tiny encode), which is several times faster; else x264."""
+    global _encoder
+    if _encoder is None:
+        _encoder = _CPU
+        if QUALITY.get("encoder", "auto") != "cpu":
+            for name, args in _HW:
+                test = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                        "testsrc2=s=1280x720:r=30:d=0.5", "-frames:v", "10", *args,
+                        "-f", "null", "-"]
+                try:
+                    ok = subprocess.run(test, capture_output=True, timeout=30).returncode == 0
+                except (OSError, subprocess.TimeoutExpired):
+                    ok = False
+                if ok:
+                    _encoder = (name, args)
+                    break
+    return _encoder
 
 
 def _run(cmd):
@@ -134,8 +180,8 @@ def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical", fps=6
     cmd += ["-t", f"{min(duration or left, left):.3f}"]
     cmd += [
         "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
-        "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+        "-r", str(out_fps(meta, fps)), *encoder()[1],
+        "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", str(dst),
     ]
     _run(cmd)

@@ -128,7 +128,7 @@ def post_language(cfg, note):
     return "en" if spoken == "ar" else "ar"
 
 
-LANG_NAMES = {"ar": "Arabic", "en": "English"}
+LANG_NAMES = {"ar": "Modern Standard Arabic (الفصحى)", "en": "standard English"}
 
 
 def generate(path, cfg, note="", boost_of=None, name=None):
@@ -138,7 +138,8 @@ def generate(path, cfg, note="", boost_of=None, name=None):
     lang = post_language(cfg, note)
     brief = [
         f"Write every field in {LANG_NAMES.get(lang, lang)}, whatever language the "
-        f"video or these notes are in.",
+        f"video or these notes are in, and only in it: no dialect and no words from "
+        f"another language except names and brands.",
         f"File name: {name}",
         f"Length: {meta['duration']:.0f} seconds",
     ]

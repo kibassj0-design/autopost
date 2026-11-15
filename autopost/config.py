@@ -20,7 +20,8 @@ DEFAULTS = {
     "max_seconds": 180,
     "orientation": "original",
     "fps": 60,
-    "resolution": "auto",
+    "resolution": "1080",
+    "encoder": "auto",
     "youtube_mode": "short",
     "youtube_privacy": "public",
     "tiktok_privacy": "PUBLIC_TO_EVERYONE",
@@ -39,7 +40,7 @@ DEFAULTS = {
         "captions_language": "swap",
         "caption_font": "Arial",
         "layout": "auto",
-        "max_height": 1440,
+        "max_height": 1080,
     },
     "momentum": {
         "enabled": True,
@@ -77,7 +78,9 @@ def load():
                 cfg[key] = value
     DATA.mkdir(exist_ok=True)
     from . import video
-    video.QUALITY["resolution"] = cfg["resolution"]
+    # "auto" from older versions now means the fixed 1080p default.
+    video.QUALITY["resolution"] = "1440" if str(cfg["resolution"]) == "1440" else "1080"
+    video.QUALITY["encoder"] = cfg.get("encoder", "auto")
     return cfg
 
 
