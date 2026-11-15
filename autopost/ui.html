@@ -246,7 +246,7 @@
         <div class="field small"><label>المقاطع: كل مشهد بهذه القوة أو أكثر</label><select data-set="clipper.min_score"><option value="60">عادية</option><option value="70">قوية</option><option value="80">قوية جدا فقط</option></select></div>
         <div class="field small"><label>أقل مدة (ثانية)</label><input data-set="clipper.min_seconds" type="number" min="5" max="180"></div>
         <div class="field small"><label>أقصى مدة (ثانية)</label><input data-set="clipper.max_seconds" type="number" min="5" max="180"></div>
-        <div class="field small"><label>الدقة</label><select data-set="resolution"><option value="auto">تلقائي: 2K إن وُجد وإلا 1080p</option><option value="1440">2K دائما</option><option value="1080">1080p دائما</option></select></div>
+        <div class="field small"><label>الدقة</label><select data-set="resolution"><option value="auto">أعلى جودة: 2K إن وُجد، ثم 1080p</option><option value="1080">1080p كحد أقصى</option></select></div>
         <div class="field small"><label>الإطارات بالثانية</label><select data-set="fps"><option value="60">60</option><option value="30">30</option></select></div>
         <div class="field"><label>اتجاه الفيديو</label><select data-set="orientation"><option value="original">نفس اتجاه المصدر</option><option value="vertical">طولي دائما (9:16)</option></select></div>
       </div>
@@ -308,7 +308,7 @@ const STAGES = { queued: "بالانتظار", download: "تنزيل الفيد�
 const WARNINGS = { no_captions: "المقاطع بدون كتابة: فشل تفريغ الكلام",
   no_ai_pick: "اللحظات اختيرت من الصوت والشات فقط (الذكاء الاصطناعي غير متاح)",
   no_translation: "الكتابة بقيت بلغة المتحدث (الترجمة غير متاحة)",
-  low_source: "جودة الفيديو الأصلي أقل من 1080p: كُبّرت المقاطع إلى 1080p لكن التفاصيل محدودة" };
+  low_source: "أعلى جودة متاحة للفيديو الأصلي أقل من 1080p، فالمقاطع بنفس جودته" };
 const AI_NAMES = { claude: "Claude", gemini: "Gemini", mistral: "Mistral", openrouter: "OpenRouter", groq: "Groq", cerebras: "Cerebras" };
 const PLATFORMS = { youtube: "يوتيوب", instagram: "انستغرام", tiktok: "تيك توك" };
 

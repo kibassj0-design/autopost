@@ -587,8 +587,8 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
              meta["title"], info["duration"] / 60, len(chat))
     tell("audio", None, meta["title"])
     if min(info["width"], info["height"]) < 1000:
-        log.warning("The source is only %dx%d; clips are upscaled to 1080p but can't "
-                    "gain detail that isn't there", info["width"], info["height"])
+        log.warning("The best available source is only %dx%d; clips keep that size",
+                    info["width"], info["height"])
         tell("warning", None, f"low_source: {info['width']}x{info['height']}")
 
     segments, curve, spoken = [], [], None

@@ -13,11 +13,15 @@ QUALITY = {"resolution": "auto"}  # set from config.json by config.load()
 
 
 def short_side(meta, resolution=None):
-    """1080 or 1440 (2K). 'auto' gives 2K when the source has it, never below 1080."""
+    """The output's short side: 2K or 1080p when the source has it, otherwise the
+    source's own size (a 720p source stays 720p). Never upscaled."""
+    source = min(meta["width"], meta["height"])
     setting = str(resolution or QUALITY["resolution"])
-    if setting in ("1080", "1440"):
-        return int(setting)
-    return 1440 if min(meta["width"], meta["height"]) >= 1400 else 1080
+    want = int(setting) if setting in ("1080", "1440") else 1440
+    for size in (1440, 1080):
+        if size <= want and source >= size - 40:  # a few pixels short still counts
+            return size
+    return max(2, source - source % 2)  # below 1080: keep the source size
 
 
 def target_size(meta, orientation="vertical", resolution=None):
@@ -25,6 +29,7 @@ def target_size(meta, orientation="vertical", resolution=None):
     anything else, and every non-landscape source, is vertical (e.g. 1080x1920)."""
     short = short_side(meta, resolution)
     long = short * 16 // 9
+    long -= long % 2  # H.264 needs even sizes
     if orientation == "original" and meta["width"] > meta["height"] * 1.1:
         return long, short
     return short, long
