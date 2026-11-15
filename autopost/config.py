@@ -30,6 +30,7 @@ DEFAULTS = {
         "min_seconds": 30,
         "max_seconds": 80,
         "whisper_model": "small",
+        "whisper_device": "cpu",
         "language": None,
         "captions": True,
         "captions_language": "swap",

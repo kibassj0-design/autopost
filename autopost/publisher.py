@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from . import config, momentum, pipeline, store
+from .platforms import instagram
 
 log = logging.getLogger("autopost")
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
@@ -24,6 +25,7 @@ class Publisher:
         self.current = None       # file name being published right now
         self.last_post = 0.0
         self.last_check = 0.0
+        self.last_renew = 0.0
         self._sizes = {}
         self._logged = None
         self._db = None
@@ -110,6 +112,13 @@ class Publisher:
         for path in ready[:1]:
             self.release, self.first, self._logged = False, None, None
             self._publish(path)
+
+        if time.time() - self.last_renew > 3600:
+            self.last_renew = time.time()
+            try:
+                instagram.refresh_if_due(log)
+            except Exception as e:
+                log.warning("Instagram token renewal: %s", e)
 
         if (accounts and m["enabled"]
                 and time.time() - self.last_check >= m["check_every_minutes"] * 60):

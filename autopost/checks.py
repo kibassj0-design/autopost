@@ -2,8 +2,6 @@
 import re
 import shutil
 
-import requests
-
 from . import config, llm
 from .platforms import instagram, tiktok, youtube
 
@@ -19,11 +17,7 @@ def _attempt(results, name, fn):
 
 
 def _instagram():
-    r = requests.get(f"{instagram._base()}/{config.env('IG_USER_ID')}", timeout=30,
-                     params={"fields": "username",
-                             "access_token": config.env("IG_ACCESS_TOKEN")})
-    if r.status_code >= 400:
-        raise RuntimeError(r.text[:200])
+    instagram.identify(config.env("IG_ACCESS_TOKEN"))
 
 
 def run(cfg):

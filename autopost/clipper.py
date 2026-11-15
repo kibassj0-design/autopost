@@ -49,6 +49,7 @@ def download(url, work, max_height, start=None, end=None, tell=lambda *a: None):
         "outtmpl": str(work / "source.%(ext)s"),
         "noplaylist": True, "quiet": True, "no_warnings": True,
         "progress_hooks": [lambda d: _download_progress(d, tell)],
+        "js_runtimes": js_runtimes(),
     }
     if start is not None or end is not None:
         opts["download_ranges"] = yt_dlp.utils.download_range_func(
@@ -72,6 +73,21 @@ def download(url, work, max_height, start=None, end=None, tell=lambda *a: None):
     except Exception as e:
         log.info("No chat replay (%s)", str(e)[:120])
     return path, meta, chat
+
+
+def js_runtimes():
+    """YouTube needs a JavaScript runtime for yt-dlp to see its full-quality formats.
+    The `deno` package ships one; Node.js is used too when it is installed."""
+    runtimes = {}
+    try:
+        from deno import find_deno_bin
+        runtimes["deno"] = {"path": find_deno_bin()}
+    except Exception:
+        if shutil.which("deno"):
+            runtimes["deno"] = {}
+    if shutil.which("node"):
+        runtimes["node"] = {}
+    return runtimes or {"deno": {}}
 
 
 def _download_progress(d, tell):
@@ -159,10 +175,14 @@ def top_peaks(curve, count, gap):
 
 # ---------------------------------------------------------------- transcript
 
-def transcribe(wav, model_name, language, tell=lambda *a: None):
-    """([{start, end, text, words: [{start, end, word}]}], spoken language code)."""
+def transcribe(wav, model_name, language, tell=lambda *a: None, device="cpu"):
+    """([{start, end, text, words: [{start, end, word}]}], spoken language code).
+    The processor is the default: on Windows a graphics card without its CUDA
+    libraries can crash the whole program instead of raising an error."""
+    if device != "gpu":
+        return _transcribe(wav, model_name, language, tell, "cpu", "int8")
     try:
-        return _transcribe(wav, model_name, language, tell, "auto", "auto")
+        return _transcribe(wav, model_name, language, tell, "cuda", "float16")
     except Exception as e:
         # The usual cause on Windows: a graphics card is detected but its CUDA
         # libraries are not installed. The processor always works, just slower.
@@ -551,7 +571,8 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
         curve = hype_curve(loudness(wav), chat)
         try:
             tell("transcribe", 0, meta["title"])
-            segments, spoken = transcribe(wav, c["whisper_model"], c["language"], tell)
+            segments, spoken = transcribe(wav, c["whisper_model"], c["language"], tell,
+                                          c.get("whisper_device", "cpu"))
             log.info("Spoken language: %s, %d lines", spoken, len(segments))
             (work / "transcript.json").write_text(json.dumps(segments, ensure_ascii=False))
         except Exception as e:

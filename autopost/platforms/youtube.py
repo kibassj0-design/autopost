@@ -32,6 +32,13 @@ def exchange(code):
         "redirect_uri": REDIRECT, "grant_type": "authorization_code"}, timeout=30),
         "YouTube token exchange")
     config.save_tokens("youtube", {"refresh_token": r.json()["refresh_token"]})
+    try:  # the channel name, shown in the app
+        ch = requests.get(f"{API}/channels", params={"part": "snippet", "mine": "true"},
+                          headers={"Authorization": f"Bearer {r.json()['access_token']}"},
+                          timeout=30).json()
+        config.save_tokens("youtube", {"username": ch["items"][0]["snippet"]["title"]})
+    except Exception:
+        pass
 
 
 def _headers():

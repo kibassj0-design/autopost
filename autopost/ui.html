@@ -92,6 +92,15 @@
                  background: #000; }
   .toggle { display: flex; align-items: center; gap: 4px; margin-inline-end: 16px; }
   .toggle label { margin: 0; color: var(--text); font-size: 14px; }
+  .acct-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .acct-head h2 { margin: 0; }
+  .acct-head .grow { flex: 1; }
+  ol.steps { margin: 6px 0 14px; padding-inline-start: 22px; color: var(--muted); font-size: 14px; }
+  ol.steps li { margin: 3px 0; }
+  ol.steps b { color: var(--text); font-weight: 600; }
+  code { direction: ltr; unicode-bidi: embed; background: var(--panel2); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  .card > .muted.small { margin-top: 10px; }
+  .finish { margin-top: 12px; padding: 12px; border: 1px dashed var(--accent); border-radius: 10px; }
 </style>
 </head>
 <body>
@@ -102,7 +111,8 @@
 <nav id="nav">
   <button data-tab="home" class="active">الرئيسية</button>
   <button data-tab="posts">المنشورات</button>
-  <button data-tab="settings">الإعدادات والمفاتيح</button>
+  <button data-tab="accounts">الحسابات</button>
+  <button data-tab="settings">الإعدادات</button>
   <button data-tab="log">السجل</button>
 </nav>
 <main>
@@ -152,6 +162,66 @@
     </div>
   </section>
 
+  <section class="tab" id="tab-accounts">
+    <div class="card">
+      <div class="acct-head"><h2>يوتيوب</h2><span class="chip" data-conn="youtube"></span><span class="grow"></span><button class="btn sm danger" data-disconnect="youtube" hidden>فصل</button></div>
+      <ol class="steps">
+        <li>افتح <a href="https://console.cloud.google.com" target="_blank" rel="noopener">console.cloud.google.com</a> وأنشئ مشروعا.</li>
+        <li><b>APIs &amp; Services ← Library</b>: فعّل <b>YouTube Data API v3</b>.</li>
+        <li><b>OAuth consent screen</b>: اختر External، ثم في <b>Audience ← Test users</b> أضف إيميل قناتك.</li>
+        <li><b>Credentials ← Create credentials ← OAuth client ID</b> من نوع <b>Desktop app</b>، والصق القيمتين هنا.</li>
+      </ol>
+      <div class="row">
+        <div class="field"><label>Client ID</label><input data-key="YT_CLIENT_ID" dir="ltr" autocomplete="off"></div>
+        <div class="field"><label>Client secret</label><input data-key="YT_CLIENT_SECRET" dir="ltr" type="password" autocomplete="off"></div>
+        <div class="field small"><label>&nbsp;</label><button class="btn primary" data-auth="youtube">ربط يوتيوب</button></div>
+      </div>
+      <div class="muted small">عند تحذير «لم تتحقق Google من هذا التطبيق»: إعدادات متقدمة ← الانتقال إلى التطبيق.</div>
+      <div class="msg" data-msg="youtube"></div>
+    </div>
+
+    <div class="card">
+      <div class="acct-head"><h2>انستغرام</h2><span class="chip" data-conn="instagram"></span><span class="grow"></span><button class="btn sm danger" data-disconnect="instagram" hidden>فصل</button></div>
+      <ol class="steps">
+        <li>حوّل حسابك إلى <b>احترافي</b> (Creator أو Business) من إعدادات تطبيق انستغرام.</li>
+        <li>افتح <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener">developers.facebook.com/apps</a> ← <b>Create App</b>، واختر الاستخدام الخاص بـ Instagram.</li>
+        <li>داخل التطبيق: <b>Instagram ← API setup with Instagram login</b> ← <b>Add account</b> وسجّل بحسابك.</li>
+        <li>اضغط <b>Generate token</b> بجانب حسابك، وانسخ التوكن (يبدأ بـ IG) والصقه هنا. الأداة تعرف رقم الحساب وحدها وتجدد التوكن تلقائيا.</li>
+      </ol>
+      <div class="row">
+        <div class="grow"><label>Access token</label><input id="ig-token" dir="ltr" type="password" autocomplete="off" placeholder="IGAA..."></div>
+        <button class="btn primary" id="ig-connect">ربط انستغرام</button>
+      </div>
+      <div class="msg" data-msg="instagram"></div>
+    </div>
+
+    <div class="card">
+      <div class="acct-head"><h2>تيك توك</h2><span class="chip" data-conn="tiktok"></span><span class="grow"></span><button class="btn sm danger" data-disconnect="tiktok" hidden>فصل</button></div>
+      <ol class="steps">
+        <li>افتح <a href="https://developers.tiktok.com/apps" target="_blank" rel="noopener">developers.tiktok.com/apps</a> ← أنشئ تطبيقا واملأ بياناته.</li>
+        <li><b>Add products</b>: أضف <b>Login Kit</b> و <b>Content Posting API</b>، وفعّل <b>Direct Post</b>. في <b>Scopes</b> فعّل <code>video.publish</code> و <code>video.list</code>.</li>
+        <li>في Login Kit ضع <b>Redirect URI</b> يبدأ بـ https (مثلا رابط مستودعك على GitHub)، وضع نفس الرابط هنا بالحرف.</li>
+        <li>في <b>Sandbox ← Target users</b> أضف حسابك، ثم الصق Client key و Client secret واضغط ربط.</li>
+      </ol>
+      <div class="row">
+        <div class="field"><label>Client key</label><input data-key="TT_CLIENT_KEY" dir="ltr" autocomplete="off"></div>
+        <div class="field"><label>Client secret</label><input data-key="TT_CLIENT_SECRET" dir="ltr" type="password" autocomplete="off"></div>
+      </div>
+      <div class="row">
+        <div class="grow"><label>Redirect URI</label><input data-key="TT_REDIRECT_URI" dir="ltr" autocomplete="off" placeholder="https://github.com/..."></div>
+        <button class="btn primary" data-auth="tiktok">ربط تيك توك</button>
+      </div>
+      <div id="tt-finish" class="finish" hidden>
+        <div class="row">
+          <div class="grow"><label>بعد الموافقة ينقلك المتصفح لصفحة عنوانها فيه <code>code=</code>. انسخ العنوان كاملا والصقه هنا</label><input id="tt-pasted" dir="ltr"></div>
+          <button class="btn primary" id="tt-done">إكمال الربط</button>
+        </div>
+      </div>
+      <div class="muted small">قبل أن يجتاز تطبيقك تدقيق تيك توك، كل ما يُنشر يكون خاصا (تراه أنت فقط).</div>
+      <div class="msg" data-msg="tiktok"></div>
+    </div>
+  </section>
+
   <section class="tab" id="tab-settings">
     <div class="card">
       <h2>الذكاء الاصطناعي</h2>
@@ -171,35 +241,6 @@
     </div>
 
     <div class="card">
-      <h2>الحسابات</h2>
-      <h3>يوتيوب <span class="chip" data-conn="youtube"></span></h3>
-      <div class="row">
-        <div class="field"><label>Client ID</label><input data-key="YT_CLIENT_ID" dir="ltr" autocomplete="off"></div>
-        <div class="field"><label>Client secret</label><input data-key="YT_CLIENT_SECRET" dir="ltr" type="password" autocomplete="off"></div>
-        <div class="field small"><button class="btn" data-auth="youtube">ربط الحساب</button></div>
-      </div>
-      <h3>انستغرام <span class="chip" data-conn="instagram"></span></h3>
-      <div class="row">
-        <div class="field"><label>رقم الحساب (User ID)</label><input data-key="IG_USER_ID" dir="ltr" autocomplete="off"></div>
-        <div class="field"><label>Access token</label><input data-key="IG_ACCESS_TOKEN" dir="ltr" type="password" autocomplete="off"></div>
-      </div>
-      <h3>تيك توك <span class="chip" data-conn="tiktok"></span></h3>
-      <div class="row">
-        <div class="field"><label>Client key</label><input data-key="TT_CLIENT_KEY" dir="ltr" autocomplete="off"></div>
-        <div class="field"><label>Client secret</label><input data-key="TT_CLIENT_SECRET" dir="ltr" type="password" autocomplete="off"></div>
-        <div class="field"><label>Redirect URI</label><input data-key="TT_REDIRECT_URI" dir="ltr" autocomplete="off"></div>
-        <div class="field small"><button class="btn" data-auth="tiktok">ربط الحساب</button></div>
-      </div>
-      <div id="tt-finish" hidden>
-        <div class="row">
-          <div class="grow"><label>بعد الموافقة، انسخ عنوان الصفحة التي انتقل إليها المتصفح والصقه هنا</label><input id="tt-pasted" dir="ltr"></div>
-          <button class="btn primary" id="tt-done">إكمال الربط</button>
-        </div>
-      </div>
-      <div id="auth-msg"></div>
-    </div>
-
-    <div class="card">
       <h2>المقاطع</h2>
       <div class="row">
         <div class="field small"><label>عدد المقاطع لكل رابط</label><input data-set="clipper.count" type="number" min="1" max="30"></div>
@@ -211,6 +252,7 @@
       <div class="row">
         <div class="field"><label>لغة الكتابة على الفيديو</label><select data-set="clipper.captions_language"><option value="swap">عكس لغة المتحدث (إنكليزي ← عربي)</option><option value="original">نفس لغة المتحدث</option><option value="ar">عربي دائما</option><option value="en">إنكليزي دائما</option></select></div>
         <div class="field"><label>دقة تفريغ الكلام (الأكبر أدق وأبطأ)</label><select data-set="clipper.whisper_model"><option>tiny</option><option>base</option><option>small</option><option>medium</option><option>large-v3</option></select></div>
+        <div class="field"><label>تفريغ الكلام على</label><select data-set="clipper.whisper_device"><option value="cpu">المعالج (مضمون)</option><option value="gpu">كرت الشاشة NVIDIA (أسرع، يحتاج CUDA)</option></select></div>
         <div class="field"><label>التأطير عند التحويل إلى طولي</label><select data-set="clipper.layout"><option value="auto">تلقائي (على وجه المتكلم إن وُجد)</option><option value="fit">المشهد كاملا بخلفية مموّهة</option><option value="crop">قص من الوسط</option></select></div>
       </div>
       <div class="toggle"><input type="checkbox" id="cap" data-set="clipper.captions"><label for="cap">اكتب الكلام على الفيديو</label></div>
@@ -302,7 +344,7 @@ $("#nav").addEventListener("click", e => {
   if (!tab) return;
   $$("#nav button").forEach(b => b.classList.toggle("active", b === e.target));
   $$(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + tab));
-  if (tab === "settings") loadSettings();
+  if (tab === "settings" || tab === "accounts") loadSettings();
 });
 
 let state = null;
@@ -316,12 +358,14 @@ function render() {
                  text: "الذكاء الاصطناعي: " + (s.ai.length ? AI_NAMES[s.ai[0]] + (s.ai.length > 1 ? " +" + (s.ai.length - 1) : "") : "غير مضبوط"),
                  title: s.ai.map(n => AI_NAMES[n]).join(" ← ") }),
     ...Object.entries(PLATFORMS).map(([k, name]) =>
-      el("span", { class: "chip " + (s.connected[k] ? "on" : ""), text: name + (s.connected[k] ? " ✓" : " غير مربوط") })));
+      el("span", { class: "chip " + (s.connected[k] ? "on" : ""),
+                   text: name + (s.connected[k] ? " ✓" + (s.enabled.includes(k) ? "" : " (موقوف)") : " غير مربوط") })));
   $$("[data-conn]").forEach(c => {
-    const on = s.connected[c.dataset.conn];
+    const p = c.dataset.conn, on = s.connected[p];
     c.className = "chip " + (on ? "on" : "off");
-    c.textContent = on ? "مربوط" : "غير مربوط";
+    c.textContent = on ? "مربوط" + (s.accounts[p] ? ": " + s.accounts[p] : "") : "غير مربوط";
   });
+  $$("[data-disconnect]").forEach(b => { b.hidden = !s.connected[b.dataset.disconnect]; });
 
   // banner
   const banner = $("#banner");
@@ -330,7 +374,7 @@ function render() {
   if (!s.publisher.has_account) msgs.push("لا يوجد حساب مربوط: المقاطع ستُصنع وتبقى في الطابور دون نشر.");
   banner.replaceChildren(...(msgs.length ? [el("div", { class: "banner" }, [
     el("div", { text: msgs.join(" ") }),
-    el("div", { class: "small", text: "اضبطها من تبويب «الإعدادات والمفاتيح»." })])] : []));
+    el("div", { class: "small", text: "الحسابات تُربط من تبويب «الحسابات»، والمفاتيح من «الإعدادات»." })])] : []));
 
   // jobs
   const jobs = $("#jobs");
@@ -497,25 +541,53 @@ $("#check").addEventListener("click", async () => {
   btn.disabled = false;
 });
 
+function accountMsg(platform, text, kind) {
+  const box = $(`[data-msg="${platform}"]`);
+  box.replaceChildren(...(text ? [note(text, kind)] : []));
+}
+
 $$("[data-auth]").forEach(b => b.addEventListener("click", async () => {
-  const platform = b.dataset.auth, msg = $("#auth-msg");
+  const platform = b.dataset.auth;
   if (!await save()) return;
   try {
     const { url } = await api("/api/auth/start", { platform });
     window.open(url, "_blank", "noopener");
-    if (platform === "tiktok") { $("#tt-finish").hidden = false; msg.replaceChildren(); }
-    else msg.replaceChildren(note("وافق في الصفحة التي فُتحت. بعدها يتغير الوضع هنا إلى «مربوط» تلقائيا.", "ok"));
-  } catch (e) { msg.replaceChildren(note("أدخل مفاتيح هذه المنصة أولا. (" + e.message + ")", "bad")); }
+    if (platform === "tiktok") {
+      $("#tt-finish").hidden = false;
+      accountMsg(platform, "");
+      $("#tt-pasted").focus();
+    } else accountMsg(platform, "وافق في الصفحة التي فُتحت. بعدها يتغير الوضع هنا إلى «مربوط» تلقائيا.", "ok");
+  } catch (e) { accountMsg(platform, "أدخل مفاتيح هذه المنصة أولا. (" + e.message + ")", "bad"); }
 }));
+
 $("#tt-done").addEventListener("click", async () => {
-  const msg = $("#auth-msg");
   try {
     await api("/api/auth/finish", { platform: "tiktok", pasted: $("#tt-pasted").value });
     $("#tt-finish").hidden = true; $("#tt-pasted").value = "";
-    msg.replaceChildren(note("تم ربط تيك توك.", "ok"));
-    refresh(); loadSettings();
-  } catch (e) { msg.replaceChildren(note(e.message, "bad")); }
+    accountMsg("tiktok", "تم ربط تيك توك.", "ok");
+    refresh();
+  } catch (e) { accountMsg("tiktok", e.message, "bad"); }
 });
+
+$("#ig-connect").addEventListener("click", async () => {
+  const btn = $("#ig-connect");
+  btn.disabled = true;
+  accountMsg("instagram", "يتحقق من التوكن…");
+  try {
+    const { username } = await api("/api/instagram/connect", { token: $("#ig-token").value });
+    $("#ig-token").value = "";
+    accountMsg("instagram", "تم ربط انستغرام" + (username ? ": @" + username : "") + ".", "ok");
+    refresh();
+  } catch (e) { accountMsg("instagram", e.message, "bad"); }
+  btn.disabled = false;
+});
+
+$$("[data-disconnect]").forEach(b => b.addEventListener("click", async () => {
+  const p = b.dataset.disconnect;
+  if (!confirm("فصل " + PLATFORMS[p] + "؟ لن يُنشر عليه حتى تربطه من جديد.")) return;
+  try { await api("/api/disconnect", { platform: p }); accountMsg(p, ""); } catch (e) { alert(e.message); }
+  refresh();
+}));
 
 refresh();
 setInterval(refresh, 2000);

@@ -34,7 +34,7 @@ SETTINGS = {
     "default_hashtags": list, "orientation": str, "ai_provider": str,
     "min_minutes_between_posts": int, "fps": int, "youtube_mode": str,
     "clipper.count": int, "clipper.min_seconds": int, "clipper.max_seconds": int,
-    "clipper.whisper_model": str, "clipper.captions": bool,
+    "clipper.whisper_model": str, "clipper.whisper_device": str, "clipper.captions": bool,
     "clipper.captions_language": str, "clipper.layout": str,
     "momentum.enabled": bool, "momentum.views_per_hour": int,
 }
@@ -130,6 +130,9 @@ class App:
         for post in posts:
             post["title"] = post["title"].splitlines()[0] if post["title"] else ""
         connected = {p: config.connected(p) for p in ("youtube", "instagram", "tiktok")}
+        tokens = config.get_tokens()
+        accounts = {p: tokens.get(p, {}).get("username", "") if connected[p] else ""
+                    for p in connected}
         return {
             "jobs": self.jobs[-20:][::-1],
             "queue": clips,
@@ -140,6 +143,8 @@ class App:
                 "has_account": any(connected[p] for p in self.cfg["platforms"]),
             },
             "connected": connected,
+            "accounts": accounts,
+            "enabled": self.cfg["platforms"],
             "ai": llm.providers(self.cfg),
             "logs": list(self.logs.lines)[-200:],
         }
@@ -201,6 +206,8 @@ class App:
             raise ValueError("مدة المقطع: الحد الأدنى يجب أن يكون أصغر من الأقصى، والأقصى 180 ثانية.")
         if changes.get("youtube_mode") not in (None, "short", "both", "video"):
             raise ValueError("youtube_mode: short / both / video")
+        if changes.get("clipper", {}).get("whisper_device") not in (None, "cpu", "gpu"):
+            raise ValueError("whisper_device: cpu / gpu")
         if changes.get("fps") not in (None, 30, 60):
             raise ValueError("عدد الإطارات: 30 أو 60.")
         if changes:
@@ -212,6 +219,24 @@ class App:
         if platform == "youtube":
             return youtube.auth_url(self.oauth_state)
         return tiktok.auth_url()
+
+    def instagram_connect(self, token):
+        from .platforms import instagram
+        if not token.strip():
+            raise ValueError("الصق التوكن أولا.")
+        name = instagram.connect(token)
+        if "instagram" not in self.cfg["platforms"]:
+            config.save_config(self.cfg, {"platforms": self.cfg["platforms"] + ["instagram"]})
+        return name
+
+    def disconnect(self, platform):
+        tokens = config.get_tokens()
+        tokens.pop(platform, None)
+        config.TOKENS.write_text(json.dumps(tokens, indent=2))
+        if platform == "instagram":
+            config.write_env({"IG_ACCESS_TOKEN": "", "IG_USER_ID": ""})
+        config.save_config(self.cfg, {"platforms": [p for p in self.cfg["platforms"]
+                                                    if p != platform]})
 
     def auth_finish(self, platform, pasted):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(pasted).query)
@@ -359,6 +384,12 @@ def make_handler(app):
                                     for n, ok, d in checks.run(app.cfg)]}
             elif path == "/api/auth/start":
                 return {"url": app.auth_start(body["platform"])}
+            elif path == "/api/instagram/connect":
+                return {"username": app.instagram_connect(str(body.get("token", "")))}
+            elif path == "/api/disconnect":
+                if body.get("platform") not in ("youtube", "instagram", "tiktok"):
+                    raise ValueError("unknown platform")
+                app.disconnect(body["platform"])
             elif path == "/api/auth/finish":
                 app.auth_finish(body["platform"], str(body.get("pasted", "")))
             elif path == "/api/open-folder":

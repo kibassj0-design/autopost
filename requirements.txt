@@ -1,6 +1,7 @@
 anthropic>=1.0
 requests>=2.31
-yt-dlp
+yt-dlp[default]
+deno
 faster-whisper>=1.0
 opencv-python-headless<5
 numpy

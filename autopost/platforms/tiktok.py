@@ -39,6 +39,12 @@ def _token_request(data):
 def exchange(code):
     _token_request({"code": code, "grant_type": "authorization_code",
                     "redirect_uri": config.env("TT_REDIRECT_URI")})
+    try:  # the account name, shown in the app
+        info = _call("/post/publish/creator_info/query/", {}, "TikTok creator info")
+        config.save_tokens("tiktok", {"username": info.get("creator_nickname")
+                                      or info.get("creator_username", "")})
+    except Exception:
+        pass
 
 
 def _headers():
