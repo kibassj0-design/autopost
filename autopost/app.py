@@ -59,6 +59,7 @@ class App:
         self.publisher = Publisher(cfg)
         self.jobs = []
         self.stops = {}
+        self.cancels = {}
         self.durations = {}
         threading.Thread(target=self.publisher.run_forever, daemon=True).start()
 
@@ -71,13 +72,23 @@ class App:
                "began": time.time(), "ended": None}
         self.jobs.append(job)
         self.stops[job["id"]] = threading.Event()
+        self.cancels[job["id"]] = threading.Event()
         # Each job has its own thread, so a live stream being followed doesn't hold up
         # other links; the heavy part of each job still runs one at a time.
         threading.Thread(target=self._work, args=(job,), daemon=True).start()
         return job
 
     def stop_job(self, job_id):
-        if job_id in self.stops:
+        """A normal link is cancelled at once. A live stream first stops recording and
+        clips what it has; pressing again while it finishes cancels it outright."""
+        job = next((j for j in self.jobs if j["id"] == job_id), None)
+        if job is None or job_id not in self.stops:
+            return
+        if job["live"] and not job.get("stopping"):
+            job["stopping"] = True
+            self.stops[job_id].set()
+        else:
+            self.cancels[job_id].set()
             self.stops[job_id].set()
 
     def _work(self, job):
@@ -102,7 +113,8 @@ class App:
 
         try:
             clips = clipper.run(job["url"], self.cfg, start=job["start"], end=job["end"],
-                                progress=progress, stop=self.stops[job["id"]])
+                                progress=progress, stop=self.stops[job["id"]],
+                                cancel=self.cancels[job["id"]])
             job.update(status="done", stage="done", fraction=1, clips=len(clips))
         except clipper.Cancelled:
             job.update(status="cancelled", stage="cancelled")

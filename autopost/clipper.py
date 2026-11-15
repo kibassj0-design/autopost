@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading as _threading
 import time
 import wave
 from pathlib import Path
@@ -613,10 +614,40 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
             "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
             "-movflags", "+faststart", out.name]
     # Run inside the output folder so the subtitle filter needs no path escaping.
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=out.parent)
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed: {proc.stderr.strip()[-600:]}")
+    code, err = _ffmpeg(cmd, out.parent)
+    enc = video.encoder()
+    if code != 0 and enc[0] != "libx264":
+        # The graphics card refused this one (driver, size, format): use the processor
+        # from now on rather than fail clips.
+        log.warning("%s failed (%s); switching to the processor encoder", enc[0], err[-200:])
+        video._encoder = video._CPU
+        cmd = [x for x in cmd]
+        i = cmd.index(enc[1][0])
+        cmd[i:i + len(enc[1])] = video._CPU[1]
+        code, err = _ffmpeg(cmd, out.parent)
+    if code != 0:
+        raise RuntimeError(f"ffmpeg failed: {err[-600:]}")
     return layout
+
+
+def _ffmpeg(cmd, cwd):
+    """Run ffmpeg, killing it at once if the job is cancelled. Returns (code, stderr)."""
+    errfile = Path(cwd) / f".ffmpeg-{os.getpid()}-{_threading.get_ident()}.log"
+    with open(errfile, "wb") as err:
+        proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stderr=err)
+        while True:
+            try:
+                proc.wait(timeout=0.5)
+                break
+            except subprocess.TimeoutExpired:
+                if _cancelled():
+                    proc.kill()
+                    proc.wait()
+                    errfile.unlink(missing_ok=True)
+                    raise Cancelled("cancelled")
+    text = errfile.read_text(errors="replace").strip()
+    errfile.unlink(missing_ok=True)
+    return proc.returncode, text
 
 
 # ---------------------------------------------------------------- orchestration
@@ -655,16 +686,30 @@ def _shift(segments, offset):
                        for w in x["words"]]} for x in segments]
 
 
-def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, stop=None):
+_ctx = _threading.local()  # the running job's cancel event, for this thread
+
+
+def _cancelled():
+    cancel = getattr(_ctx, "cancel", None)
+    return cancel is not None and cancel.is_set()
+
+
+def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, stop=None,
+        cancel=None):
     """Returns the list of finished clip files (already in inbox/ when queue=True).
-    `progress(stage, fraction, detail)` is called as the work moves along. A live
-    channel is followed until it ends or `stop` (a threading.Event) is set."""
+    `progress(stage, fraction, detail)` is called as the work moves along.
+    `cancel` (a threading.Event) ends the job at once, killing any running step.
+    `stop` ends a live stream gracefully: recording stops and what was recorded is
+    still clipped. For a normal link, `stop` cancels as well."""
     live = {"on": False}
+    cancel = cancel or _threading.Event()
+    stop = stop or _threading.Event()
+    _ctx.cancel = cancel
 
     def tell(stage, fraction=None, detail=""):
-        # Cancelling a normal job stops it at the next progress report (downloads
-        # report many times a second). A live job finishes its last chunk instead.
-        if stop is not None and stop.is_set() and not live["on"]:
+        # Downloads report many times a second, so this ends them quickly too.
+        if cancel.is_set() or (stop.is_set() and not live["on"]):
+            cancel.set()
             raise Cancelled("cancelled")
         if progress:
             progress(stage, fraction, detail)
@@ -680,7 +725,10 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, s
         info = probe_url(url)
         if is_live(info):
             live["on"] = True
-            return run_live(info, cfg, work, tell, stop, queue)
+            try:
+                return run_live(info, cfg, work, tell, stop, queue, cancel)
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
 
     tell("download", 0)
     try:
@@ -688,7 +736,7 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, s
                                    tell, info)
         return process(src, meta, chat, cfg, work, tell, queue)
     except Exception as e:
-        if stop is not None and stop.is_set():
+        if cancel.is_set():
             log.info("Cancelled: %s", url)
             raise Cancelled("cancelled") from e
         raise
@@ -717,7 +765,9 @@ class _heavy:
     def __enter__(self):
         if not PROCESS_LOCK.acquire(blocking=False):
             self.tell("waiting")
-            PROCESS_LOCK.acquire()
+            while not PROCESS_LOCK.acquire(timeout=0.5):
+                if _cancelled():  # cancelling must not wait for another link's turn
+                    raise Cancelled("cancelled")
             self.tell(self.stage)
 
     def __exit__(self, *exc):
@@ -930,7 +980,7 @@ def _twitch_chat(channel, started, stamps, stop):
         log.info("Twitch chat not available (%s)", e)
 
 
-def run_live(info, cfg, work, tell, stop, queue=True):
+def run_live(info, cfg, work, tell, stop, queue=True, cancel=None):
     """Record a live stream in chunks and make clips from each chunk while the
     stream goes on, until it ends or `stop` is set."""
     import threading
@@ -938,6 +988,8 @@ def run_live(info, cfg, work, tell, stop, queue=True):
     import yt_dlp
 
     stop = stop or threading.Event()
+    cancel = cancel or threading.Event()
+    _ctx.cancel = cancel
     max_height = 1440 if str(cfg.get("resolution")) == "1440" else 1080
     with yt_dlp.YoutubeDL(_ydl_opts(work, tell, **{
             "format": f"best[height<={max_height}]/best"})) as ydl:
@@ -964,6 +1016,19 @@ def run_live(info, cfg, work, tell, stop, queue=True):
     errlog = open(work / "recorder.log", "wb")  # a file, so a chatty ffmpeg can't stall
     recorder = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errlog)
 
+    def end_recording():
+        # Stop recording the moment the user asks, even while a chunk is being clipped.
+        stop.wait()
+        if recorder.poll() is None:
+            try:  # "q" makes ffmpeg close the current chunk properly
+                recorder.stdin.write(b"q")
+                recorder.stdin.flush()
+                recorder.wait(timeout=20)
+            except (OSError, subprocess.TimeoutExpired, ValueError):
+                recorder.kill()
+
+    threading.Thread(target=end_recording, daemon=True).start()
+
     stamps = []
     host = (info.get("extractor_key") or "").lower()
     if "twitch" in host and info.get("uploader_id"):
@@ -978,6 +1043,8 @@ def run_live(info, cfg, work, tell, stop, queue=True):
         try:
             finished.extend(process(path, meta, chat, cfg, work, tell, queue,
                                     part=f" #{index + 1}"))
+        except Cancelled:
+            raise
         except Exception as e:
             if path.exists() and video.probe(path)["duration"] < cfg["clipper"]["min_seconds"]:
                 log.info("Live chunk %d is too short for a clip", index + 1)
@@ -986,6 +1053,10 @@ def run_live(info, cfg, work, tell, stop, queue=True):
         path.unlink(missing_ok=True)
 
     while True:
+        if cancel.is_set():
+            stop.set()  # also ends the recorder
+            recorder.kill()
+            raise Cancelled("cancelled")
         # Check the recorder first: listing first could miss a chunk written just
         # before it exits.
         running = recorder.poll() is None
@@ -1000,12 +1071,8 @@ def run_live(info, cfg, work, tell, stop, queue=True):
         if not running:
             break
         if stop.is_set():
-            try:  # "q" makes ffmpeg close the current chunk properly
-                recorder.communicate(b"q", timeout=20)
-            except subprocess.TimeoutExpired:
-                recorder.kill()
-            continue
-        time.sleep(5)
+            tell("live", None, f"stopping · {len(finished)} clips")
+        time.sleep(1 if stop.is_set() else 5)
     errlog.close()
     if recorder.returncode not in (0, 255, None) and not finished and done_chunks == 0:
         err = (work / "recorder.log").read_text(errors="replace")[-300:]

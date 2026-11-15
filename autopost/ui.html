@@ -394,6 +394,7 @@ function render() {
     if (j.stage === "render" && j.detail) label += " " + j.detail;
     if (running && j.fraction != null && j.stage !== "render") label += " " + Math.round(j.fraction * 100) + "%";
     if (j.stage === "live" && j.detail) label += ": " + j.detail.replace("min", "دقيقة مسجلة").replace("clips", "مقطع");
+    if (j.live && j.stopping && running) label = "تم إيقاف التسجيل، يقص الدقائق المسجلة";
     if (j.stage === "download" && j.detail === "sections") label = "تنزيل مقاطع اللحظات فقط";
     if (j.status === "done") label = "اكتمل: " + j.clips + " مقطع في الطابور";
     if (j.status === "error") label = "فشل";
@@ -408,9 +409,12 @@ function render() {
         el("div", { class: "title" }, [
           el("div", { text: j.title || j.url, class: j.title ? "" : "ltr" }),
           el("div", { class: "muted small", text: label })]),
-        active ? el("button", { class: "btn sm danger", text: j.live ? "إيقاف البث" : "إلغاء",
+        active ? el("button", { class: "btn sm danger",
+          text: j.live ? (j.stopping ? "إلغاء نهائي" : "إيقاف البث") : "إلغاء",
           onclick: () => {
-            const ask = j.live ? "إيقاف متابعة البث؟ الدقائق المسجلة حتى الآن تُقص كالعادة." : "إلغاء هذا الرابط؟";
+            const ask = !j.live ? "إلغاء هذا الرابط؟"
+              : j.stopping ? "إلغاء نهائي؟ الدقائق المسجلة التي لم تُقص بعد تُحذف."
+              : "إيقاف متابعة البث؟ التسجيل يتوقف الآن، والدقائق المسجلة تُقص كالعادة.";
             if (confirm(ask)) act("/api/job/stop", { id: j.id });
           } }) : null]),
       active ? bar : null,
