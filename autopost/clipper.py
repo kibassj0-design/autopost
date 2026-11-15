@@ -287,7 +287,8 @@ def pick_with_ai(segments, peaks, chat_peaks, meta, duration, c, cfg):
             "How many is up to the video: return only moments strong enough to pull views "
             "on their own (hype, shock, big laughs, clutch plays, heated or surprising "
             f"lines), each scored honestly. A score under {c['min_score']} will be dropped, "
-            "so don't pad the list; a dull video may have just one or two.")
+            "so don't pad the list and don't leave a strong one out: a dull video may have "
+            "just one or two, a packed one many.")
     if peaks:
         brief.append("Loud moments (seconds): " + ", ".join(map(str, sorted(peaks))))
     if chat_peaks:
@@ -564,9 +565,9 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
             progress(stage, fraction, detail)
 
     c = dict(cfg["clipper"])
-    if count:
-        c["count"] = count
-    c["auto"] = not c["count"]  # 0 = as many as the video has strong moments
+    # Always as many clips as the video has strong moments: a 30-minute video with
+    # two great moments gives two clips, one with ten gives ten. `count` is ignored.
+    c["auto"] = True
     job = time.strftime("%Y%m%d-%H%M%S")
     work = config.DATA / "clips" / job
     out_dir = work / "out"
@@ -577,7 +578,8 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None):
                                parse_time(end), tell)
     info = video.probe(src)
     if c["auto"]:  # a ceiling only: weak moments are dropped by score below
-        c["count"] = int(min(30, max(3, info["duration"] // 120)))
+        # Only a safety ceiling (one per minute, 60 at most); the score decides.
+        c["count"] = int(min(60, max(3, info["duration"] // 60)))
     if info["duration"] < c["min_seconds"]:
         raise RuntimeError(f"The video is only {info['duration']:.0f}s, shorter than one clip")
     log.info("Source: %s (%.1f min, %d chat messages)",

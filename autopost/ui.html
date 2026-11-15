@@ -130,7 +130,6 @@
       <details style="margin-top:12px">
         <summary class="muted small" style="cursor:pointer">خيارات لهذا الرابط</summary>
         <div class="row" style="margin-top:10px">
-          <div class="field small"><label for="count">عدد المقاطع</label><input id="count" type="number" min="1" max="30" placeholder="تلقائي"></div>
           <div class="field small"><label for="start">من الوقت</label><input id="start" dir="ltr" placeholder="0:00:00"></div>
           <div class="field small"><label for="end">إلى الوقت</label><input id="end" dir="ltr" placeholder="نهاية الفيديو"></div>
         </div>
@@ -244,8 +243,7 @@
     <div class="card">
       <h2>المقاطع</h2>
       <div class="row">
-        <div class="field"><label>عدد المقاطع لكل رابط</label><select data-set="clipper.count"><option value="0">تلقائي: كل مشهد قوي يجيب مشاهدات</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option><option>15</option><option>20</option></select></div>
-        <div class="field small"><label>قوة المشهد المطلوبة (تلقائي)</label><select data-set="clipper.min_score"><option value="60">عادية</option><option value="70">قوية</option><option value="80">قوية جدا فقط</option></select></div>
+        <div class="field small"><label>المقاطع: كل مشهد بهذه القوة أو أكثر</label><select data-set="clipper.min_score"><option value="60">عادية</option><option value="70">قوية</option><option value="80">قوية جدا فقط</option></select></div>
         <div class="field small"><label>أقل مدة (ثانية)</label><input data-set="clipper.min_seconds" type="number" min="5" max="180"></div>
         <div class="field small"><label>أقصى مدة (ثانية)</label><input data-set="clipper.max_seconds" type="number" min="5" max="180"></div>
         <div class="field small"><label>الإطارات بالثانية</label><select data-set="fps"><option value="60">60</option><option value="30">30</option></select></div>
@@ -462,7 +460,7 @@ async function act(path, body) {
 $("#go").addEventListener("click", async () => {
   const msg = $("#go-msg");
   try {
-    await api("/api/clip", { url: $("#url").value, count: $("#count").value, start: $("#start").value, end: $("#end").value });
+    await api("/api/clip", { url: $("#url").value, start: $("#start").value, end: $("#end").value });
     $("#url").value = "";
     msg.replaceChildren();
   } catch (e) { msg.replaceChildren(note(e.message, "bad")); }
@@ -508,7 +506,7 @@ function collectSettings() {
     const name = i.dataset.set;
     if (i.type === "checkbox") values[name] = i.checked;
     else if (name === "default_hashtags") values[name] = i.value.split(/\s+/).filter(Boolean);
-    else if (i.type === "number" || ["fps", "clipper.count", "clipper.min_score"].includes(name)) { if (i.value !== "") values[name] = Number(i.value); }
+    else if (i.type === "number" || ["fps", "clipper.min_score"].includes(name)) { if (i.value !== "") values[name] = Number(i.value); }
     else values[name] = i.value;
   });
   values.platforms = $$("[data-platform]").filter(i => i.checked).map(i => i.dataset.platform);
