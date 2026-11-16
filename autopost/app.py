@@ -299,10 +299,13 @@ class App:
         tokens = config.get_tokens()
         accounts = {p: tokens.get(p, {}).get("username", "") if connected[p] else ""
                     for p in connected}
+        account_errors = {p: tokens.get(p, {}).get("error", "") for p in connected
+                          if not connected[p] and tokens.get(p, {}).get("error")}
         return {
             "jobs": self.jobs[-20:][::-1],
             "queue": clips,
             "posts": posts,
+            "account_errors": account_errors,
             "publisher": {
                 "paused": pub.paused, "pause_reason": pub.pause_reason, "current": pub.current,
                 "next_post_at": pub.next_post_at(), "now": time.time(),

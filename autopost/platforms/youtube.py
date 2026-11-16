@@ -16,7 +16,41 @@ API = "https://www.googleapis.com/youtube/v3"
 UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 
+FIX_SECRET = ("Client secret في الأداة لا يطابق Client ID. الحل: console.cloud.google.com ← "
+              "APIs & Services ← Credentials ← اضغط اسم الـ OAuth client ← Add secret، ثم "
+              "Download JSON واستورد الملف في الأداة (الحسابات ← يوتيوب ← استيراد ملف Google)، "
+              "ثم اضغط «ربط يوتيوب».")
+FIX_GRANT = ("انتهى ربط يوتيوب أو أُلغي، فاضغط «ربط يوتيوب» مرة أخرى. لكي لا ينتهي كل 7 أيام: "
+             "console.cloud.google.com ← Google Auth Platform ← Audience ← Publish app "
+             "(In production).")
+
+
+def _google_error(r):
+    try:
+        return r.json().get("error", "")
+    except ValueError:
+        return ""
+
+
+def check_client():
+    """Ask Google whether the Client ID and secret belong together, with a dummy code:
+    a wrong pair answers invalid_client, a right one invalid_grant."""
+    from . import PlatformError
+    cid, secret = config.env("YT_CLIENT_ID").strip(), config.env("YT_CLIENT_SECRET").strip()
+    if not cid.endswith(".apps.googleusercontent.com"):
+        raise PlatformError("Client ID يجب أن ينتهي بـ .apps.googleusercontent.com")
+    try:
+        r = requests.post(TOKEN_URL, timeout=20, data={
+            "code": "check", "client_id": cid, "client_secret": secret,
+            "redirect_uri": REDIRECT, "grant_type": "authorization_code"})
+    except requests.RequestException:
+        return
+    if _google_error(r) in ("invalid_client", "unauthorized_client"):
+        raise PlatformError(FIX_SECRET)
+
+
 def auth_url(state=""):
+    check_client()
     return AUTH_URL + "?" + urllib.parse.urlencode({
         "state": state,
         "client_id": config.env("YT_CLIENT_ID"), "redirect_uri": REDIRECT,
@@ -31,7 +65,7 @@ def exchange(code):
         "client_secret": config.env("YT_CLIENT_SECRET"),
         "redirect_uri": REDIRECT, "grant_type": "authorization_code"}, timeout=30),
         "YouTube token exchange")
-    config.save_tokens("youtube", {"refresh_token": r.json()["refresh_token"]})
+    config.save_tokens("youtube", {"refresh_token": r.json()["refresh_token"], "error": ""})
     try:  # the channel name, shown in the app
         ch = requests.get(f"{API}/channels", params={"part": "snippet", "mine": "true"},
                           headers={"Authorization": f"Bearer {r.json()['access_token']}"},
@@ -46,11 +80,18 @@ def _headers():
     refresh = config.get_tokens().get("youtube", {}).get("refresh_token")
     if not refresh:
         raise PlatformError("YouTube is not connected: run `python -m autopost auth youtube`")
-    r = check(requests.post(TOKEN_URL, data={
+    r = requests.post(TOKEN_URL, data={
         "client_id": config.env("YT_CLIENT_ID"),
         "client_secret": config.env("YT_CLIENT_SECRET"),
-        "refresh_token": refresh, "grant_type": "refresh_token"}, timeout=30),
-        "YouTube token refresh")
+        "refresh_token": refresh, "grant_type": "refresh_token"}, timeout=30)
+    error = _google_error(r) if r.status_code >= 400 else ""
+    if error in ("invalid_client", "unauthorized_client", "invalid_grant"):
+        # The connection cannot work until the user reconnects: mark YouTube as not
+        # connected (so publishing skips it instead of failing every clip) and say why.
+        fix = FIX_GRANT if error == "invalid_grant" else FIX_SECRET
+        config.save_tokens("youtube", {"refresh_token": "", "error": fix})
+        raise PlatformError("YouTube: " + fix)
+    check(r, "YouTube token refresh")
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 

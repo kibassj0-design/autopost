@@ -347,7 +347,12 @@
         <div class="field"><label>Client secret</label><input data-key="YT_CLIENT_SECRET" dir="ltr" type="password" autocomplete="off"></div>
         <div class="field small"><label>&nbsp;</label><button class="btn primary" data-auth="youtube">ربط يوتيوب</button></div>
       </div>
-      <div class="muted small">عند تحذير «لم تتحقق Google من هذا التطبيق»: إعدادات متقدمة ← الانتقال إلى التطبيق.</div>
+      <div class="row" style="align-items:center;margin-top:4px">
+        <input type="file" id="yt-json" accept=".json,application/json" hidden>
+        <button class="btn sm" id="yt-import">استيراد ملف Google (JSON)</button>
+        <span class="muted small grow">الأضمن: في Google Cloud اضغط <b>Download JSON</b> بجانب الـ client أو الـ secret الجديد، واستورد الملف هنا بدل النسخ واللصق.</span>
+      </div>
+      <div class="muted small">عند تحذير «لم تتحقق Google من هذا التطبيق»: إعدادات متقدمة ← الانتقال إلى التطبيق. ولكي لا ينتهي الربط كل 7 أيام: <b>Google Auth Platform ← Audience ← Publish app</b>.</div>
       <div class="msg" data-msg="youtube"></div>
     </div>
 
@@ -663,7 +668,11 @@ function render() {
   $$("[data-conn]").forEach(c => {
     const p = c.dataset.conn, on = s.connected[p];
     c.className = "chip " + (on ? "on" : "off");
-    c.textContent = on ? "مربوط" + (s.accounts[p] ? ": " + s.accounts[p] : "") : "غير مربوط";
+    const err = (s.account_errors || {})[p];
+    c.textContent = on ? "مربوط" + (s.accounts[p] ? ": " + s.accounts[p] : "") : (err ? "يحتاج إعادة ربط" : "غير مربوط");
+    const box = $(`[data-msg="${p}"]`);
+    if (err && box && !box.dataset.shown) { box.dataset.shown = err; accountMsg(p, err, "bad"); }
+    if (!err && box && box.dataset.shown) { delete box.dataset.shown; accountMsg(p, ""); }
   });
   $$("[data-disconnect]").forEach(b => { b.hidden = !s.connected[b.dataset.disconnect]; });
   const running = s.jobs.filter(j => ["queued", "running"].includes(j.status)).length;
@@ -1067,6 +1076,23 @@ $$("[data-auth]").forEach(b => b.addEventListener("click", async () => {
     accountMsg(platform, e.message.includes("is not set") ? "أدخل مفاتيح هذه المنصة أولا. (" + e.message + ")" : e.message, "bad");
   }
 }));
+$("#yt-import").addEventListener("click", () => $("#yt-json").click());
+$("#yt-json").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    const c = data.installed || data.web || data;
+    if (!c.client_id || !c.client_secret) throw new Error("no client");
+    await api("/api/settings", { keys: { YT_CLIENT_ID: c.client_id, YT_CLIENT_SECRET: c.client_secret } });
+    $('[data-key="YT_CLIENT_ID"]').value = c.client_id;
+    $('[data-key="YT_CLIENT_SECRET"]').value = "";
+    accountMsg("youtube", "تم استيراد Client ID و Client secret من الملف. اضغط الآن «ربط يوتيوب».", "ok");
+  } catch (err) {
+    accountMsg("youtube", "هذا ليس ملف OAuth من Google. نزّله من Credentials ← اسم الـ client ← Download JSON.", "bad");
+  }
+});
 $("#tt-done").addEventListener("click", async () => {
   try {
     await api("/api/auth/finish", { platform: "tiktok", pasted: $("#tt-pasted").value });
