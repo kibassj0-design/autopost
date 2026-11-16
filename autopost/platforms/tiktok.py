@@ -16,7 +16,7 @@ CHUNK = 10 * 1024 * 1024  # TikTok allows 5-64 MB per chunk
 
 def auth_url():
     return AUTH_URL + "?" + urllib.parse.urlencode({
-        "client_key": config.env("TT_CLIENT_KEY"), "scope": config.env("TT_SCOPES", required=False) or "user.info.basic,video.publish",
+        "client_key": config.env("TT_CLIENT_KEY"), "scope": config.env("TT_SCOPES", required=False) or "user.info.basic,video.publish,video.upload",
         "response_type": "code", "redirect_uri": config.env("TT_REDIRECT_URI"),
         "state": "autopost"})
 
@@ -88,14 +88,24 @@ def publish(path, text, cfg):
         privacy = options[0] if options else "SELF_ONLY"
 
     size, chunk, count = _chunks(path)
-    init = _call("/post/publish/video/init/", {
-        "post_info": {"title": text["caption"], "privacy_level": privacy,
-                      "disable_comment": bool(creator.get("comment_disabled")),
-                      "disable_duet": bool(creator.get("duet_disabled")),
-                      "disable_stitch": bool(creator.get("stitch_disabled"))},
-        "source_info": {"source": "FILE_UPLOAD", "video_size": size,
-                        "chunk_size": chunk, "total_chunk_count": count},
-    }, "TikTok upload init")
+    try:
+        init = _call("/post/publish/video/init/", {
+            "post_info": {"title": text["caption"], "privacy_level": privacy,
+                          "disable_comment": bool(creator.get("comment_disabled")),
+                          "disable_duet": bool(creator.get("duet_disabled")),
+                          "disable_stitch": bool(creator.get("stitch_disabled"))},
+            "source_info": {"source": "FILE_UPLOAD", "video_size": size,
+                            "chunk_size": chunk, "total_chunk_count": count},
+        }, "TikTok upload init")
+    except PlatformError as e:
+        if "unaudited_client_can_only_post_to_private_accounts" not in str(e):
+            raise
+        # Before TikTok's audit, direct posting only works on private accounts. Rather
+        # than lose the post, send it to the TikTok inbox: posted from the app with one
+        # tap, publicly.
+        log.warning("TikTok: the app isn't audited yet and the account is public, so "
+                    "direct posting is refused; sent to your TikTok inbox instead")
+        return _upload_draft(path, text, cfg)
 
     _send(path, init["upload_url"], size, chunk, count)
 
