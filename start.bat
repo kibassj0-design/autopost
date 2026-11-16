@@ -5,8 +5,12 @@ cd /d "%~dp0"
 set "VPY=.venv\Scripts\python.exe"
 set "CHECK=import sys,struct;sys.exit(0 if sys.version_info[:2]>=(3,10) and struct.calcsize('P')==8 else 1)"
 
-rem Installed before and still healthy: go straight to the tool.
+:begin
+rem Installed before, healthy, and the package list unchanged since: go straight to
+rem the tool. After an update that adds packages, they are installed here.
 if not exist ".venv\installed.ok" goto setup
+fc /b requirements.txt ".venv\installed.ok" >nul 2>&1
+if errorlevel 1 goto setup
 "%VPY%" -c "import anthropic, requests" >nul 2>&1
 if errorlevel 1 goto setup
 goto run
@@ -70,7 +74,7 @@ pause
 goto run
 
 :installed
-echo ok> ".venv\installed.ok"
+copy /y requirements.txt ".venv\installed.ok" >nul
 echo.
 echo Installation finished.
 echo.
@@ -80,6 +84,12 @@ goto run
 if not exist .env copy .env.example .env >nul
 if not exist config.json copy config.example.json config.json >nul
 "%VPY%" -m autopost %*
+rem Exit code 3: the tool installed an update. A new launcher is swapped in and
+rem started inside one block, because this file must not change while it runs.
+if errorlevel 3 if not errorlevel 4 (
+  if exist start.bat.new ( move /y start.bat.new start.bat >nul & start "" "%~f0" %* & exit /b 0 )
+  goto begin
+)
 echo.
 pause
 exit /b 0

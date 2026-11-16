@@ -16,7 +16,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import checks, config, llm, store, video
+from . import checks, config, llm, store, updater, video
 from .platforms import tiktok, youtube
 from .publisher import Publisher
 
@@ -32,7 +32,7 @@ PLAIN_KEYS = ["YT_CLIENT_ID", "IG_USER_ID", "IG_GRAPH_HOST", "TT_CLIENT_KEY",
 SETTINGS = {
     "platforms": list, "language": str, "post_language": str, "niche": str, "brand_voice": str,
     "default_hashtags": list, "orientation": str, "ai_provider": str,
-    "min_minutes_between_posts": int, "fps": int, "resolution": str, "speed_mode": str, "encoder": str, "youtube_mode": str, "tiktok_mode": str,
+    "min_minutes_between_posts": int, "fps": int, "resolution": str, "speed_mode": str, "auto_update": bool, "encoder": str, "youtube_mode": str, "tiktok_mode": str,
     "clipper.min_score": int, "clipper.min_seconds": int, "clipper.max_seconds": int,
     "clipper.whisper_model": str, "clipper.whisper_device": str, "clipper.captions": bool,
     "clipper.captions_language": str, "clipper.caption_style": str, "clipper.layout": str,
@@ -69,6 +69,9 @@ class App:
         self.cancels = {}
         self.durations = {}
         threading.Thread(target=self.publisher.run_forever, daemon=True).start()
+        self.update = {"available": False, "latest": None, "current": updater.installed().get("sha"),
+                       "checked": None, "error": "", "busy": False}
+        threading.Thread(target=self._update_loop, daemon=True).start()
 
     # ---- clip jobs
 
@@ -140,6 +143,48 @@ class App:
             job["timings"][job["stage"]] = round(
                 job["timings"].get(job["stage"], 0) + job["ended"] - job["stage_at"])
         job.update(result)
+
+    # ---- updates
+
+    def idle(self):
+        """Nothing that an update and restart would interrupt."""
+        busy_jobs = any(j["status"] in ("queued", "running") for j in self.jobs)
+        return not busy_jobs and self.publisher.current is None
+
+    def check_update(self):
+        try:
+            info = updater.check(self.cfg)
+            self.update.update(available=info["available"], latest=info["latest"],
+                               current=info["current"], checked=time.time(), error="")
+        except Exception as e:
+            self.update.update(checked=time.time(), error=str(e)[:200])
+        return self.update
+
+    def apply_update(self):
+        """Install the newest version, then exit so start.bat starts the new one."""
+        self.update["busy"] = True
+        try:
+            updater.apply(self.cfg, self.update.get("latest"))
+        except Exception as e:
+            self.update.update(busy=False, error=str(e)[:200])
+            raise RuntimeError(f"تعذّر التحديث: {e}")
+        threading.Timer(1.5, lambda: os._exit(updater.RESTART_CODE)).start()
+
+    def _update_loop(self):
+        time.sleep(20)  # let the app settle first
+        while True:
+            self.check_update()
+            if self.update["available"] and self.cfg.get("auto_update", True):
+                # Wait for a quiet moment: never in the middle of a clip or a post.
+                while not self.idle():
+                    time.sleep(30)
+                try:
+                    log.info("Installing the new version automatically")
+                    self.apply_update()
+                    return
+                except Exception as e:
+                    log.warning("Automatic update failed: %s", e)
+            time.sleep(6 * 3600)
 
     # ---- schedule
 
@@ -269,6 +314,7 @@ class App:
             "ai": llm.providers(self.cfg),
             "encoder": video.encoder()[0],
             "schedule": self.schedule_list(),
+            "update": {k: v for k, v in self.update.items()},
             "logs": list(self.logs.lines)[-200:],
         }
 
@@ -537,6 +583,13 @@ def make_handler(app):
             elif path == "/api/queue/publish":
                 pub.publish_now(body.get("name"))
                 pub.paused = False
+            elif path == "/api/update/check":
+                return app.check_update()
+            elif path == "/api/update/apply":
+                if not app.idle():
+                    raise ValueError("انتظر حتى ينتهي الشغل الجاري أو ألغه، ثم حدّث.")
+                app.apply_update()
+                return {"restarting": True}
             elif path == "/api/schedule/add":
                 app.schedule_add(body["file"], body["at"], body.get("caption", ""),
                                  body.get("platforms"))

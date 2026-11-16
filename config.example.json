@@ -49,5 +49,6 @@
     "window_hours": 72,
     "max_boosts_per_video": 1,
     "boost_clip_seconds": 30
-  }
+  },
+  "auto_update": true
 }

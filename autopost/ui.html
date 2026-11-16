@@ -247,6 +247,8 @@
   </nav>
   <div class="side-foot">
     <div class="chips" id="chips"></div>
+    <div class="small muted" id="version" style="padding:0 4px"></div>
+    <button class="btn sm primary" id="upd-now" hidden>تحديث الآن</button>
     <button class="btn ghost sm theme" id="theme"><svg><use href="#i-moon"/></svg><span>الوضع الفاتح</span></button>
   </div>
 </aside>
@@ -452,6 +454,15 @@
       <div class="toggle"><input type="checkbox" id="mom" data-set="momentum.enabled"><label for="mom">عند ارتفاع المشاهدات انشر المقطع التالي فورا</label></div>
     </div>
 
+    <div class="card">
+      <h2>التحديثات</h2>
+      <div class="toggle"><input type="checkbox" id="autoupd" data-set="auto_update"><label for="autoupd">حدّث الأداة تلقائيا عند صدور نسخة جديدة (في وقت لا يوجد فيه شغل جارٍ)</label></div>
+      <div class="row" style="align-items:center;margin-top:8px">
+        <button class="btn" id="upd-check">تحقق من التحديثات</button>
+        <span class="muted small" id="upd-status"></span>
+      </div>
+    </div>
+
     <div class="savebar">
       <button class="btn primary" id="save">حفظ</button>
       <button class="btn" id="check">فحص الإعداد</button>
@@ -653,6 +664,7 @@ function render() {
       el("div", { class: "small muted", text: "الحسابات من تبويب «الحسابات»، والمفاتيح من «الإعدادات»." })])])] : []));
   }
 
+  if (s.update) renderUpdate(s.update);
   renderJobs(s);
   renderQueue(s);
   renderSchedule(s);
@@ -1047,6 +1059,32 @@ $$("[data-disconnect]").forEach(b => b.addEventListener("click", async () => {
   await act("/api/disconnect", { platform: p }, "فُصل " + PLATFORMS[p]);
   accountMsg(p, "");
 }));
+
+// ---------------------------------------------------------------- updates
+function renderUpdate(u) {
+  $("#version").textContent = "الإصدار: " + (u.current ? u.current.slice(0, 7) : "غير معروف");
+  $("#upd-now").hidden = !u.available || u.busy;
+  let st = u.busy ? "يحدّث الآن، ستُعاد الأداة بعد لحظات…"
+    : u.error ? "تعذّر التحقق: " + u.error
+    : u.available ? "يوجد إصدار جديد."
+    : u.checked ? "لديك أحدث إصدار." : "";
+  $("#upd-status").textContent = st;
+}
+async function doUpdate() {
+  if (!confirm("تحديث الأداة الآن؟ ستُغلق وتُفتح من جديد خلال ثوانٍ، ومفاتيحك وإعداداتك تبقى كما هي.")) return;
+  try {
+    await api("/api/update/apply", {});
+    toast("يحدّث… ستعود الأداة خلال ثوانٍ", "ok");
+    const wait = setInterval(async () => {   // reload once the new version answers
+      try { await api("/api/state"); clearInterval(wait); location.reload(); } catch (e) {}
+    }, 2500);
+  } catch (e) { toast(e.message, "bad"); }
+}
+$("#upd-now").addEventListener("click", doUpdate);
+$("#upd-check").addEventListener("click", async () => {
+  $("#upd-status").textContent = "يتحقق…";
+  try { renderUpdate(await api("/api/update/check", {})); } catch (e) { $("#upd-status").textContent = e.message; }
+});
 
 // ---------------------------------------------------------------- start
 $("#s-at").value = defaultTime();
