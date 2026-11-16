@@ -148,11 +148,16 @@ def refresh_if_due(log=None):
         log.warning("Instagram token renewal failed: %s", r.text[:160])
 
 
+UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"}
+
+
 def _host_litterbox(path):
     with open(path, "rb") as f:
         r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php",
                           data={"reqtype": "fileupload", "time": "1h"},
-                          files={"fileToUpload": (Path(path).name, f, "video/mp4")}, timeout=1800)
+                          files={"fileToUpload": (Path(path).name, f, "video/mp4")}, timeout=1800,
+                          headers=UA)
     r.raise_for_status()
     if not r.text.strip().startswith("https://"):
         raise RuntimeError(r.text[:120])
@@ -162,7 +167,7 @@ def _host_litterbox(path):
 def _host_uguu(path):
     with open(path, "rb") as f:
         r = requests.post("https://uguu.se/upload", files={"files[]": (Path(path).name, f, "video/mp4")},
-                          timeout=1800)
+                          timeout=1800, headers=UA)
     r.raise_for_status()
     return r.json()["files"][0]["url"]
 
@@ -170,14 +175,28 @@ def _host_uguu(path):
 def _host_tmpfiles(path):
     with open(path, "rb") as f:
         r = requests.post("https://tmpfiles.org/api/v1/upload",
-                          files={"file": (Path(path).name, f, "video/mp4")}, timeout=1800)
+                          files={"file": (Path(path).name, f, "video/mp4")}, timeout=1800,
+                          headers=UA)
     r.raise_for_status()
     url = r.json()["data"]["url"]  # the page; the file itself is under /dl/
     return url.replace("tmpfiles.org/", "tmpfiles.org/dl/", 1).replace("http://", "https://", 1)
 
 
-HOSTS = [("litterbox.catbox.moe", _host_litterbox), ("uguu.se", _host_uguu),
-         ("tmpfiles.org", _host_tmpfiles)]
+def _host_catbox(path):
+    """Last resort: catbox keeps the file (no expiry). The video is public on
+    Instagram anyway, but it stays on catbox until deleted there."""
+    with open(path, "rb") as f:
+        r = requests.post("https://catbox.moe/user/api.php", data={"reqtype": "fileupload"},
+                          files={"fileToUpload": (Path(path).name, f, "video/mp4")},
+                          timeout=1800, headers=UA)
+    r.raise_for_status()
+    if not r.text.strip().startswith("https://"):
+        raise RuntimeError(r.text[:120])
+    return r.text.strip()
+
+
+HOSTS = [("litterbox.catbox.moe", _host_litterbox), ("tmpfiles.org", _host_tmpfiles),
+         ("uguu.se", _host_uguu), ("catbox.moe", _host_catbox)]
 
 
 def _temporary_urls(path):

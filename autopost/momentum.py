@@ -7,6 +7,7 @@ from . import pipeline, store, video
 from .platforms import ALL
 
 log = logging.getLogger("autopost.momentum")
+_warned = set()
 
 
 def velocity(db, post, now_stats, now):
@@ -37,7 +38,12 @@ def check(cfg, db=None, dry_run=False, cut=True):
         try:
             s = ALL[post["platform"]].stats(post["remote_id"])
         except Exception as e:
-            log.warning("%s stats for post %s: %s", post["platform"], post["id"], e)
+            # Reading views needs extra permissions on some accounts; not worth a
+            # warning every half hour for every post.
+            if (post["platform"], post["id"]) not in _warned:
+                _warned.add((post["platform"], post["id"]))
+                log.info("%s views unavailable for post %s: %s", post["platform"], post["id"],
+                         str(e)[:160])
             continue
         if not s:
             continue
