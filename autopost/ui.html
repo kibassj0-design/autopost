@@ -476,6 +476,19 @@
     </div>
 
     <div class="card">
+      <h2>حفظ المفاتيح والحسابات</h2>
+      <p class="muted small" style="margin-top:-4px">الأداة تحفظ نسخة من مفاتيحك وحساباتك المربوطة وإعداداتك تلقائيا خارج مجلد الأداة، وترجعها وحدها إذا حُذف المجلد أو نزّلته من جديد. ويمكنك أيضا حفظ ملف نسخة احتياطية في أي مكان (مثل فلاشة)، واسترجاعه على أي جهاز.</p>
+      <div class="muted small" id="bk-where"></div>
+      <input type="file" id="bk-file" accept=".json,application/json" hidden>
+      <div class="row" style="align-items:center;margin-top:8px">
+        <button class="btn" id="bk-export">تنزيل ملف نسخة احتياطية</button>
+        <button class="btn" id="bk-import">استرجاع من ملف</button>
+        <button class="btn ghost" id="bk-open">فتح مجلد النسخ</button>
+      </div>
+      <p class="muted small">⚠️ ملف النسخة فيه كل مفاتيحك: احفظه عندك ولا ترسله لأحد.</p>
+    </div>
+
+    <div class="card">
       <h2>التحديثات</h2>
       <div class="toggle"><input type="checkbox" id="autoupd" data-set="auto_update"><label for="autoupd">حدّث الأداة تلقائيا عند صدور نسخة جديدة (في وقت لا يوجد فيه شغل جارٍ)</label></div>
       <div class="row" style="align-items:center;margin-top:8px">
@@ -780,7 +793,7 @@ function renderQueue(s) {
   if (!p.has_account) status = "النشر متوقف: لا يوجد حساب مربوط.";
   else if (p.paused && p.pause_reason === "failing") status = "أوقفت الأداة النشر: آخر 3 مقاطع فشلت على كل المنصات، فأُعيدت للطابور. أصلح الحسابات (الإعدادات ← فحص الإعداد) ثم اضغط «تشغيل النشر».";
   else if (p.paused) status = "النشر متوقف مؤقتا.";
-  else if (p.current) status = "يُنشر الآن: " + p.current;
+  else if (p.current) status = p.current.startsWith("retry-") ? "يعيد نشر منشور فشل…" : "يُنشر الآن: " + p.current;
   else if (!s.queue.length) status = "";
   else {
     const wait = Math.max(0, p.next_post_at - p.now);
@@ -862,7 +875,11 @@ function renderPosts(s) {
     el("td", { class: "num", text: r.views == null ? "—" : r.views.toLocaleString("en") }),
     el("td", { class: "num", text: r.likes == null ? "—" : r.likes.toLocaleString("en") }),
     el("td", { class: "num", text: fmtWhen(r.published_at) }),
-    el("td", {}, r.error ? el("span", { class: "badge bad", text: "فشل: " + r.error.slice(0, 80), title: r.error })
+    el("td", {}, r.retrying ? el("span", { class: "badge warn", text: "يعيد المحاولة…" })
+      : r.error ? el("span", { class: "row", style: "gap:6px;flex-wrap:nowrap;align-items:center" }, [
+          el("span", { class: "badge bad", text: "فشل: " + r.error.slice(0, 80), title: r.error }),
+          r.can_retry ? el("button", { class: "btn sm", text: "أعد المحاولة", title: "ينشر هذا المقطع من جديد على " + (PLATFORMS[r.platform] || r.platform) + " فقط",
+            onclick: () => act("/api/posts/retry", { id: r.id }, "سيُعاد نشره على " + (PLATFORMS[r.platform] || r.platform) + " خلال ثوان") }) : null])
       : r.url === "tiktok:inbox" ? el("span", { class: "badge warn", text: "في صندوق تيك توك: انشره من التطبيق", title: "تيك توك ← صندوق الوارد ← إشعارات النظام" })
       : r.url === "tiktok:private" ? el("span", { class: "badge warn", text: "نُشر خاصا (أنت فقط)" })
       : r.url ? el("a", { href: r.url, target: "_blank", rel: "noopener", class: "badge ok", text: "فتح ↗" })
@@ -1055,7 +1072,7 @@ $("#check").addEventListener("click", async () => {
     const { results } = await api("/api/check", {});
     out.replaceChildren(...results.map(r => {
       const n = note((r.ok ? "✓ " : "✗ ") + r.name + (r.detail ? ": " + r.detail : ""), r.ok ? "ok" : "bad");
-      n.dir = "ltr"; n.style.textAlign = "left"; return n;
+      n.dir = "auto"; return n;
     }));
   } catch (e) { out.replaceChildren(note(e.message, "bad")); }
   btn.disabled = false;
@@ -1118,6 +1135,39 @@ $$("[data-disconnect]").forEach(b => b.addEventListener("click", async () => {
   await act("/api/disconnect", { platform: p }, "فُصل " + PLATFORMS[p]);
   accountMsg(p, "");
 }));
+
+// ---------------------------------------------------------------- backup
+async function backupInfo() {
+  try {
+    const i = await api("/api/backup/info", {});
+    $("#bk-where").textContent = "مكان النسخة التلقائية: " + i.folder + (i.files.length ? " (" + i.files.length + " ملفات محفوظة)" : "");
+  } catch (e) { $("#bk-where").textContent = ""; }
+}
+$("#bk-export").addEventListener("click", async () => {
+  try {
+    const data = await api("/api/backup/export", {});
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const a = el("a", { href: URL.createObjectURL(blob), download: "autopost-backup-" + new Date().toISOString().slice(0, 10) + ".json" });
+    document.body.append(a); a.click(); a.remove();
+    toast("نُزّل ملف النسخة الاحتياطية", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+});
+$("#bk-import").addEventListener("click", () => $("#bk-file").click());
+$("#bk-file").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (!confirm("استرجاع المفاتيح والحسابات من هذا الملف؟ ستُستبدل القيم الحالية بما في الملف.")) return;
+    const r = await api("/api/backup/import", { data });
+    fillSettings(await api("/api/settings"));
+    refresh(); backupInfo();
+    toast("تم الاسترجاع: " + r.keys + " مفتاح", "ok");
+  } catch (err) { toast(err.message.includes("JSON") ? "الملف ليس نسخة احتياطية صالحة." : err.message, "bad"); }
+});
+$("#bk-open").addEventListener("click", () => act("/api/open-folder", { folder: "backup" }));
+backupInfo();
 
 // ---------------------------------------------------------------- updates
 function renderUpdate(u) {

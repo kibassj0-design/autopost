@@ -116,30 +116,75 @@ def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
     db = db or store.connect()
     video_id = store.add_video(db, src, text["youtube"]["title"], parent_id)
     results = {}
-    uploads = []
     for name in platforms:
-        if name == "youtube":
-            for path in _youtube_files(src, ready, cfg):
-                uploads.append((name, path, _youtube_text(path, text[name])))
-        elif name == "instagram":
-            uploads.append((name, _instagram_file(ready, cfg), text[name]))
-        else:
-            uploads.append((name, ready, text[name]))
-
-    for name, path, body in uploads:
         # Cancelling stops before the next platform; an upload already under way
         # finishes first (the platforms offer no way to abort one half-way).
         if stop and stop():
             log.info("Publishing cancelled before %s", name)
             raise PublishCancelled("cancelled")
+        results[name] = _send(db, video_id, name, src, ready, text, cfg, stop)
+    return video_id, results, text
+
+
+def _uploads(name, src, ready, text, cfg):
+    """The file(s) and text this platform gets."""
+    if name == "youtube":
+        return [(path, _youtube_text(path, text[name])) for path in _youtube_files(src, ready, cfg)]
+    if name == "instagram":
+        return [(_instagram_file(ready, cfg), text[name])]
+    return [(ready, text[name])]
+
+
+def _send(db, video_id, name, src, ready, text, cfg, stop=None, post_id=None):
+    """Publish to one platform and record each upload. Returns the url, or 'FAILED: ...'
+    when nothing went up. Making the platform's copy is inside the try: a copy that
+    cannot be made fails that platform only, never the others."""
+    def record(remote_id=None, url=None, error=None):
+        nonlocal post_id
+        if post_id:  # a retry fills the row it came from
+            store.update_post(db, post_id, remote_id, url, error)
+            post_id = None
+        else:
+            store.add_post(db, video_id, name, remote_id, url, error)
+
+    try:
+        uploads = _uploads(name, src, ready, text, cfg)
+    except Exception as e:
+        record(error=str(e))
+        log.error("%s: %s", name, e)
+        return f"FAILED: {e}"
+    result = None
+    for i, (path, body) in enumerate(uploads):
+        if i and stop and stop():
+            break
         try:
             remote_id, url = ALL[name].publish(str(path), body, cfg)
-            store.add_post(db, video_id, name, remote_id, url)
-            results[name] = url or "published"
+            record(remote_id, url)
+            result = result or url or "published"
             if not str(url or "").startswith("tiktok:"):
                 log.info("%s: published %s", name, url or "")
         except Exception as e:  # one platform failing must not stop the others
-            store.add_post(db, video_id, name, error=str(e))
-            results[name] = f"FAILED: {e}"
+            record(error=str(e))
             log.error("%s: %s", name, e)
-    return video_id, results, text
+            if result is None and i == len(uploads) - 1:
+                return f"FAILED: {e}"
+    return result or "FAILED: nothing was uploaded"
+
+
+def retry(db, post_id, cfg, stop=None):
+    """Publish a clip again to the one platform where it failed, in the same row."""
+    row = db.execute("SELECT p.platform, p.video_id, v.source, v.title FROM posts p"
+                     " JOIN videos v ON v.id = p.video_id WHERE p.id=?", (post_id,)).fetchone()
+    if row is None:
+        raise RuntimeError("this post no longer exists")
+    src = Path(row["source"])
+    if not src.exists():
+        raise RuntimeError("the video file is no longer on the computer")
+    name = row["platform"]
+    if not config.connected(name):
+        raise RuntimeError(f"{name} is not connected")
+    ready = prepare(src, cfg)
+    text, origin = caption.generate(ready, cfg, "", None,
+                                    name=re.sub(r"^\d{10}-", "", src.name))
+    log.info("Retrying %s on %s (caption by %s)", src.name, name, origin)
+    return _send(db, row["video_id"], name, src, ready, text, cfg, stop, post_id=post_id)

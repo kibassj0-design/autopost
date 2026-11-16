@@ -56,6 +56,19 @@ DEFAULTS = {
 }
 
 
+def atomic_write(path, text):
+    """Write a file so that a crash or power cut never leaves it half written."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _backup():
+    from . import backup
+    backup.save()
+
+
 def _load_env():
     env = ROOT / ".env"
     if not env.exists():
@@ -69,11 +82,16 @@ def _load_env():
 
 
 def load():
+    from . import backup
+    backup.restore_missing()  # keys or accounts lost or damaged: put the saved copy back
     _load_env()
     cfg = json.loads(json.dumps(DEFAULTS))
     path = ROOT / "config.json"
     if path.exists():
-        user = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            user = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:  # a damaged config.json must not stop the tool
+            user = {}
         for key, value in user.items():
             if isinstance(value, dict) and isinstance(cfg.get(key), dict):
                 cfg[key].update(value)
@@ -84,6 +102,7 @@ def load():
     # "auto" from older versions now means the fixed 1080p default.
     video.QUALITY["resolution"] = "1440" if str(cfg["resolution"]) == "1440" else "1080"
     video.QUALITY["encoder"] = cfg.get("encoder", "auto")
+    _backup()
     return cfg
 
 
@@ -95,15 +114,22 @@ def env(name, required=True):
 
 
 def get_tokens():
-    return json.loads(TOKENS.read_text()) if TOKENS.exists() else {}
+    try:
+        return json.loads(TOKENS.read_text(encoding="utf-8")) if TOKENS.exists() else {}
+    except ValueError:
+        return {}
 
 
 def save_tokens(platform, values):
     tokens = get_tokens()
     tokens[platform] = {**tokens.get(platform, {}), **values}
     DATA.mkdir(exist_ok=True)
-    TOKENS.write_text(json.dumps(tokens, indent=2))
-    TOKENS.chmod(0o600)
+    atomic_write(TOKENS, json.dumps(tokens, indent=2))
+    try:
+        TOKENS.chmod(0o600)
+    except OSError:
+        pass
+    _backup()
 
 
 def write_env(values):
@@ -118,7 +144,8 @@ def write_env(values):
         else:
             lines.append(f"{key}={value}")
         os.environ[key] = value
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write(path, "\n".join(lines) + "\n")
+    _backup()
 
 
 def connected(platform):
@@ -131,7 +158,10 @@ def connected(platform):
 def save_config(cfg, changes):
     """Apply changes to the live settings and to config.json."""
     path = ROOT / "config.json"
-    saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except ValueError:  # damaged file: start it again from the live settings
+        saved = {}
     for key, value in changes.items():
         if isinstance(value, dict) and isinstance(cfg.get(key), dict):
             cfg[key].update(value)
@@ -139,4 +169,5 @@ def save_config(cfg, changes):
         else:
             cfg[key] = value
             saved[key] = value
-    path.write_text(json.dumps(saved, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write(path, json.dumps(saved, ensure_ascii=False, indent=2) + "\n")
+    _backup()

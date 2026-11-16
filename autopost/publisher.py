@@ -34,6 +34,27 @@ class Publisher:
         self._logged = None
         self._db = None
         self.lock = threading.Lock()
+        self.retries = []         # failed posts to send again, one platform each
+
+    def retry(self, post_id):
+        """Send a failed post again to its platform, at the next pass (no waiting gap:
+        the user asked for it)."""
+        if post_id not in self.retries:
+            self.retries.append(post_id)
+
+    def _retry(self, post_id):
+        self.current = f"retry-{post_id}"
+        self.cancel_flag.clear()
+        try:
+            result = pipeline.retry(self._db, post_id, self.cfg, stop=self.cancel_flag.is_set)
+            log.info("Retry of post %d: %s", post_id, result)
+        except Exception as e:
+            log.error("Retry of post %d: %s", post_id, e)
+            store.update_post(self._db, post_id, error=str(e))
+        finally:
+            if post_id in self.retries:
+                self.retries.remove(post_id)
+            self.current = None
 
     def queued(self):
         """Videos waiting in inbox/, in publishing order."""
@@ -174,6 +195,9 @@ class Publisher:
         for path in ready[:1]:
             self.release, self.first, self._logged = False, None, None
             self._publish(path)
+
+        if self.retries:
+            self._retry(self.retries[0])
 
         # Scheduled posts go out at their time, whatever the gap between queue posts
         # and even while the queue is paused: the user picked that time.

@@ -34,7 +34,7 @@ def _token_request(data):
     # TikTok rotates the refresh token, so keep whichever one came back.
     config.save_tokens("tiktok", {
         "access_token": body["access_token"], "refresh_token": body["refresh_token"],
-        "expires_at": time.time() + body["expires_in"] - 300})
+        "expires_at": time.time() + body["expires_in"] - 300, "error": ""})
     return body["access_token"]
 
 
@@ -54,10 +54,20 @@ def _headers():
     tok = config.get_tokens().get("tiktok", {})
     if not tok.get("refresh_token"):
         raise PlatformError("TikTok is not connected: run `python -m autopost auth tiktok`")
-    access = tok["access_token"]
-    if time.time() >= tok.get("expires_at", 0):
-        access = _token_request({"grant_type": "refresh_token",
-                                 "refresh_token": tok["refresh_token"]})
+    access = tok.get("access_token")
+    if not access or time.time() >= tok.get("expires_at", 0):
+        try:
+            access = _token_request({"grant_type": "refresh_token",
+                                     "refresh_token": tok["refresh_token"]})
+        except PlatformError as e:
+            if "invalid_grant" in str(e) or "invalid_client" in str(e):
+                # The sign-in ended (revoked, or the app keys changed): show "reconnect"
+                # and skip TikTok, instead of failing every clip.
+                fix = ("انتهى ربط تيك توك أو تغيّرت مفاتيح التطبيق. اضغط «ربط تيك توك» مرة "
+                       "أخرى. (" + str(e)[:150] + ")")
+                config.save_tokens("tiktok", {"refresh_token": "", "error": fix})
+                raise PlatformError("TikTok: " + fix)
+            raise
     return {"Authorization": f"Bearer {access}",
             "Content-Type": "application/json; charset=UTF-8"}
 

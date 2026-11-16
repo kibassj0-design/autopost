@@ -16,7 +16,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import checks, config, llm, store, updater, video
+from . import backup, checks, config, llm, store, updater, video
 from .platforms import tiktok, youtube
 from .publisher import Publisher
 
@@ -72,6 +72,12 @@ class App:
         self.update = {"available": False, "latest": None, "current": updater.installed().get("sha"),
                        "checked": None, "error": "", "busy": False}
         threading.Thread(target=self._update_loop, daemon=True).start()
+        threading.Thread(target=self._backup_loop, daemon=True).start()
+
+    def _backup_loop(self):
+        while True:  # posts and schedule change all day; keys are saved when they change
+            time.sleep(3600)
+            backup.save()
 
     # ---- clip jobs
 
@@ -163,6 +169,7 @@ class App:
     def apply_update(self):
         """Install the newest version, then exit so start.bat starts the new one."""
         self.update["busy"] = True
+        backup.save()
         try:
             updater.apply(self.cfg, self.update.get("latest"))
         except Exception as e:
@@ -289,12 +296,16 @@ class App:
         db = store.connect()
         posts = [dict(r) for r in db.execute(
             "SELECT p.id, p.platform, p.url, p.error, p.published_at, v.title, v.parent_id,"
+            " v.source,"
             " (SELECT views FROM stats s WHERE s.post_id = p.id ORDER BY ts DESC LIMIT 1) views,"
             " (SELECT likes FROM stats s WHERE s.post_id = p.id ORDER BY ts DESC LIMIT 1) likes"
             " FROM posts p JOIN videos v ON v.id = p.video_id ORDER BY p.id DESC LIMIT 100")]
         db.close()
         for post in posts:
             post["title"] = post["title"].splitlines()[0] if post["title"] else ""
+            source = post.pop("source") or ""
+            post["can_retry"] = bool(post["error"] and source and Path(source).exists())
+            post["retrying"] = post["id"] in self.publisher.retries
         connected = {p: config.connected(p) for p in ("youtube", "instagram", "tiktok")}
         tokens = config.get_tokens()
         accounts = {p: tokens.get(p, {}).get("username", "") if connected[p] else ""
@@ -414,7 +425,7 @@ class App:
     def disconnect(self, platform):
         tokens = config.get_tokens()
         tokens.pop(platform, None)
-        config.TOKENS.write_text(json.dumps(tokens, indent=2))
+        config.atomic_write(config.TOKENS, json.dumps(tokens, indent=2))
         if platform == "instagram":
             config.write_env({"IG_ACCESS_TOKEN": "", "IG_USER_ID": ""})
         config.save_config(self.cfg, {"platforms": [p for p in self.cfg["platforms"]
@@ -663,9 +674,25 @@ def make_handler(app):
             elif path == "/api/auth/finish":
                 app.auth_finish(body["platform"], str(body.get("pasted", "")))
             elif path == "/api/open-folder":
-                folder = {"inbox": pub.inbox, "done": pub.done, "failed": pub.failed}[
-                    body.get("folder", "inbox")]
+                folder = {"inbox": pub.inbox, "done": pub.done, "failed": pub.failed,
+                          "backup": backup.folder()}[body.get("folder", "inbox")]
+                folder.mkdir(parents=True, exist_ok=True)
                 _open_folder(folder)
+            elif path == "/api/posts/retry":
+                app.publisher.retry(int(body["id"]))
+            elif path == "/api/backup/export":
+                backup.save()
+                return backup.export()
+            elif path == "/api/backup/import":
+                count = backup.import_(body.get("data"))
+                app.cfg.update(config.load())
+                return {"keys": count}
+            elif path == "/api/backup/info":
+                backup.save()
+                latest = backup.folder() / "latest"
+                return {"folder": str(backup.folder()),
+                        "files": sorted(str(f.relative_to(latest)) for f in latest.rglob("*")
+                                        if f.is_file()) if latest.exists() else []}
             else:
                 raise ValueError("unknown action")
 

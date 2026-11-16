@@ -6,14 +6,18 @@ from . import config, llm
 from .platforms import instagram, tiktok, youtube
 
 
-def _attempt(results, name, fn):
+def _attempt(results, name, fn, ok_text="يعمل"):
     try:
         fn()
-        results.append((name, True, "login works"))
+        results.append((name, True, ok_text))
     except Exception as e:
-        # Error text can quote the request URL; never show the token in it.
-        detail = re.sub(r"access_token=[^&\s)']+", "access_token=***", str(e))[:200]
+        # Error text can quote the request URL; never show a token or key in it.
+        detail = re.sub(r"(access_token|client_secret|key)=[^&\s)']+", r"\1=***", str(e))[:300]
         results.append((name, False, detail))
+
+
+def _env(*names):
+    return all(config.env(n, required=False) for n in names)
 
 
 def _instagram():
@@ -42,10 +46,24 @@ def run(cfg):
             _attempt(results, f"AI model ({name})",
                      lambda name=name: llm.compat_models(name, cfg))
     if "youtube" in cfg["platforms"]:
-        _attempt(results, "YouTube", youtube._headers)
+        if config.connected("youtube"):
+            _attempt(results, "YouTube", youtube._headers, "مربوط ويعمل")
+        elif _env("YT_CLIENT_ID", "YT_CLIENT_SECRET"):
+            _attempt(results, "YouTube: Client ID + secret", youtube.check_client,
+                     "المفاتيح صحيحة، بقي الضغط على «ربط يوتيوب»")
+        else:
+            results.append(("YouTube", False, "غير مربوط"))
     if "instagram" in cfg["platforms"]:
-        _attempt(results, "Instagram", _instagram)
+        if config.connected("instagram"):
+            _attempt(results, "Instagram", _instagram, "مربوط ويعمل")
+        else:
+            results.append(("Instagram", False, "غير مربوط"))
+        if _env("FB_APP_ID", "FB_APP_SECRET"):
+            _attempt(results, "Facebook App ID + secret", instagram.fb_check_app, "صحيحة")
     if "tiktok" in cfg["platforms"]:
-        _attempt(results, "TikTok", lambda: tiktok._call(
-            "/post/publish/creator_info/query/", {}, "TikTok"))
+        if config.connected("tiktok"):
+            _attempt(results, "TikTok", lambda: tiktok._call(
+                "/post/publish/creator_info/query/", {}, "TikTok"), "مربوط ويعمل")
+        else:
+            results.append(("TikTok", False, "غير مربوط"))
     return results

@@ -41,6 +41,12 @@ def add_post(db, video_id, platform, remote_id=None, url=None, error=None):
     db.commit()
 
 
+def update_post(db, post_id, remote_id=None, url=None, error=None):
+    db.execute("UPDATE posts SET remote_id=?, url=?, published_at=?, error=? WHERE id=?",
+               (remote_id, url, time.time(), error, post_id))
+    db.commit()
+
+
 def add_stats(db, post_id, s):
     db.execute("INSERT INTO stats VALUES(?,?,?,?,?,?)",
                (post_id, time.time(), s["views"], s["likes"], s["comments"], s["shares"]))

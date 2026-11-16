@@ -265,6 +265,26 @@ def _container(token, user, text, **source):
         "access_token": token, **source}), "Instagram container").json()
 
 
+def _media_publish(token, user, creation_id):
+    """Instagram sometimes answers "media not ready" for a few seconds after the video
+    is processed; wait and ask again instead of failing a finished upload."""
+    from . import check
+    for attempt in range(4):
+        r = requests.post(f"{_base()}/{user}/media_publish", timeout=60, data={
+            "creation_id": creation_id, "access_token": token})
+        if r.status_code < 400 or attempt == 3:
+            return check(r, "Instagram publish").json()
+        try:
+            err = r.json().get("error", {})
+        except ValueError:
+            err = {}
+        not_ready = err.get("code") == 9007 or err.get("error_subcode") == 2207027 or \
+            "not ready" in str(err.get("message", "")).lower()
+        if not not_ready:
+            return check(r, "Instagram publish").json()
+        time.sleep(15)
+
+
 def publish(path, text, cfg):
     from . import PlatformError, check
     token, user = config.env("IG_ACCESS_TOKEN"), config.env("IG_USER_ID")
@@ -304,8 +324,7 @@ def publish(path, text, cfg):
         else:
             raise PlatformError(last + " (and every video_url attempt failed; see the log)")
 
-    media = check(requests.post(f"{_base()}/{user}/media_publish", timeout=60, data={
-        "creation_id": container["id"], "access_token": token}), "Instagram publish").json()
+    media = _media_publish(token, user, container["id"])
     link = requests.get(f"{_base()}/{media['id']}", timeout=30, params={
         "fields": "permalink", "access_token": token})
     return media["id"], link.json().get("permalink") if link.ok else None
