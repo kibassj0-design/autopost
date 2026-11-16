@@ -45,6 +45,11 @@ DEFAULTS = {
         "layout": "auto",
         "max_height": 1080,
     },
+    "smart_timing": {
+        "enabled": True,          # in a busy hour, post the next clip without the usual gap
+        "peak_gap_minutes": 45,   # ...but never closer than this to the previous post
+        "peaks_only": False,      # hold queued clips until a busy hour
+    },
     "momentum": {
         "enabled": True,
         "check_every_minutes": 30,

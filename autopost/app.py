@@ -16,7 +16,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import backup, checks, config, llm, store, updater, video
+from . import backup, checks, config, llm, store, timing, updater, video
 from .platforms import tiktok, youtube
 from .publisher import Publisher
 
@@ -37,6 +37,8 @@ SETTINGS = {
     "clipper.whisper_model": str, "clipper.whisper_device": str, "clipper.captions": bool,
     "clipper.captions_language": str, "clipper.caption_style": str, "clipper.layout": str,
     "momentum.enabled": bool, "momentum.views_per_hour": int,
+    "smart_timing.enabled": bool, "smart_timing.peak_gap_minutes": int,
+    "smart_timing.peaks_only": bool,
 }
 
 
@@ -298,7 +300,9 @@ class App:
             "SELECT p.id, p.platform, p.url, p.error, p.published_at, v.title, v.parent_id,"
             " v.source,"
             " (SELECT views FROM stats s WHERE s.post_id = p.id ORDER BY ts DESC LIMIT 1) views,"
-            " (SELECT likes FROM stats s WHERE s.post_id = p.id ORDER BY ts DESC LIMIT 1) likes"
+            " (SELECT likes FROM stats s WHERE s.post_id = p.id ORDER BY ts DESC LIMIT 1) likes,"
+            " (SELECT comments FROM stats s WHERE s.post_id = p.id ORDER BY ts DESC LIMIT 1) comments,"
+            " (SELECT shares FROM stats s WHERE s.post_id = p.id ORDER BY ts DESC LIMIT 1) shares"
             " FROM posts p JOIN videos v ON v.id = p.video_id ORDER BY p.id DESC LIMIT 100")]
         db.close()
         for post in posts:
@@ -680,6 +684,12 @@ def make_handler(app):
                 _open_folder(folder)
             elif path == "/api/posts/retry":
                 app.publisher.retry(int(body["id"]))
+            elif path == "/api/insights":
+                db = store.connect()
+                try:
+                    return timing.summary(app.cfg, db)
+                finally:
+                    db.close()
             elif path == "/api/backup/export":
                 backup.save()
                 return backup.export()

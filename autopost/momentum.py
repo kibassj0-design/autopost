@@ -14,15 +14,16 @@ def velocity(db, post, now_stats, now):
     """Views per hour since the last snapshot at least 15 minutes old, or since
     publishing when this is the first look."""
     prev = store.last_stats(db, post["id"], now - 900)
-    if prev:
+    if prev and prev["views"] is not None:
         hours, gained = (now - prev["ts"]) / 3600, now_stats["views"] - prev["views"]
     else:
         hours, gained = (now - post["published_at"]) / 3600, now_stats["views"]
     return gained / max(hours, 0.25)
 
 
-def check(cfg, db=None, dry_run=False, cut=True):
-    """cut=False: more clips are already queued, so a hot video should release the
+def check(cfg, db=None, dry_run=False, cut=True, boost=True):
+    """Read the numbers of recent posts (always), and act on a hot one (boost=True).
+    cut=False: more clips are already queued, so a hot video should release the
     next one early instead of cutting a follow-up. Returns what was (or should be) boosted."""
     m = cfg["momentum"]
     db = db or store.connect()
@@ -47,6 +48,9 @@ def check(cfg, db=None, dry_run=False, cut=True):
             continue
         if not s:
             continue
+        if s.get("views") is None:  # likes and comments only (no views permission)
+            store.add_stats(db, post["id"], s)
+            continue
         rate = velocity(db, post, s, now)
         store.add_stats(db, post["id"], s)
         log.info("%s | %s | %d views | %.0f views/h",
@@ -55,6 +59,8 @@ def check(cfg, db=None, dry_run=False, cut=True):
             hot[post["video_id"]] = (post, rate)
 
     boosted = []
+    if not boost:
+        return boosted
     for video_id, (post, rate) in hot.items():
         if post["parent_id"] is not None:
             continue  # a follow-up doesn't spawn its own follow-ups

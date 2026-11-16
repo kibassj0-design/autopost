@@ -6,7 +6,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, momentum, pipeline, store
+from . import config, momentum, pipeline, store, timing
 from .platforms import instagram
 
 log = logging.getLogger("autopost")
@@ -184,6 +184,21 @@ class Publisher:
 
         ready = [p for p in self.queued() if self._stable(p)]
         wait = self.next_post_at() - time.time()
+        st = cfg.get("smart_timing", {})
+        if ready and not self.release and st.get("enabled", True) and not (
+                self.paused or not accounts):
+            peak, why = timing.peak_now(cfg, self._db)
+            since = time.time() - self.last_post
+            if peak and wait > 0 and since >= st.get("peak_gap_minutes", 45) * 60:
+                log.info("Busy hour (%s): publishing the next clip now instead of waiting "
+                         "%.0f more min", "your best hours" if why.startswith("own")
+                         else "platform peak", wait / 60)
+                self.release = True
+            elif not peak and st.get("peaks_only"):
+                if self._logged != ("hold", len(ready)):
+                    log.info("%d clip(s) held for the next busy hour", len(ready))
+                    self._logged = ("hold", len(ready))
+                ready = []
         if ready and (self.paused or not accounts):
             ready = []
         elif ready and wait > 0 and not self.release:
@@ -215,12 +230,14 @@ class Publisher:
             except Exception as e:
                 log.warning("Instagram token renewal: %s", type(e).__name__)
 
-        if (accounts and m["enabled"]
-                and time.time() - self.last_check >= m["check_every_minutes"] * 60):
+        # The numbers of recent posts are read always (engagement, best hours);
+        # momentum acts on them only when it is switched on.
+        if accounts and time.time() - self.last_check >= m["check_every_minutes"] * 60:
             self.last_check = time.time()
             try:
                 queued = bool(self.queued())
-                if momentum.check(cfg, self._db, cut=not queued) and queued:
+                if momentum.check(cfg, self._db, cut=not queued, boost=m["enabled"]) \
+                        and queued:
                     self.release = True
             except Exception as e:
                 log.error("momentum check: %s", e)

@@ -130,6 +130,20 @@
   .item .actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 9px; border-radius: 999px;
            background: var(--panel2); color: var(--muted); border: 1px solid var(--line-soft); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .tile { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .tile .big { font-size: 22px; font-weight: 700; margin: 2px 0; }
+  .tile .sub { font-size: 12px; color: var(--muted); }
+  .peaknow { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; margin-bottom: 12px; }
+  .peaknow.on { background: var(--ok-soft); color: var(--ok); }
+  .peaknow.off { background: var(--panel2); color: var(--muted); }
+  .guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+  .guide .g { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .guide h3 { margin: 0 0 8px; font-size: 16px; }
+  .guide ul { margin: 6px 0 0; padding-inline-start: 18px; font-size: 13px; color: var(--muted); }
+  .guide li { margin: 3px 0; }
+  .slot { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+  .slot:last-child { border-bottom: 0; }
   .badge.ok { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
   .badge.warn { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
   .badge.bad { color: var(--bad); background: var(--bad-soft); border-color: transparent; }
@@ -240,7 +254,7 @@
   <nav id="nav">
     <button data-tab="home" class="active"><svg><use href="#i-home"/></svg><span class="lbl">الرئيسية</span><span class="count" id="c-jobs"></span></button>
     <button data-tab="schedule"><svg><use href="#i-cal"/></svg><span class="lbl">الجدولة</span><span class="count" id="c-sched"></span></button>
-    <button data-tab="posts"><svg><use href="#i-chart"/></svg><span class="lbl">المنشورات</span></button>
+    <button data-tab="posts"><svg><use href="#i-chart"/></svg><span class="lbl">المنشورات والتفاعل</span></button>
     <button data-tab="accounts"><svg><use href="#i-user"/></svg><span class="lbl">الحسابات</span></button>
     <button data-tab="settings"><svg><use href="#i-gear"/></svg><span class="lbl">الإعدادات</span></button>
     <button data-tab="log"><svg><use href="#i-log"/></svg><span class="lbl">السجل</span></button>
@@ -323,10 +337,23 @@
   </section>
 
   <section class="tab" id="tab-posts">
-    <div class="page-head"><div><h1>المنشورات</h1><p>كل ما نُشر، مع المشاهدات والإعجابات.</p></div></div>
+    <div class="page-head"><div><h1>المنشورات والتفاعل</h1><p>كل ما نُشر، والتفاعل عليه، وأفضل أوقات النشر لحسابك.</p></div></div>
     <div class="card">
+      <h2>التفاعل في آخر 30 يوما</h2>
+      <div id="eng" class="tiles"></div>
+      <p class="muted small" id="eng-note" style="margin-bottom:0"></p>
+    </div>
+    <div class="card">
+      <h2>أفضل أوقات النشر</h2>
+      <div id="peak"></div>
+      <div id="own"></div>
+      <div class="guide" id="guide"></div>
+      <p class="muted small" style="margin-bottom:0">الأوقات بتوقيت جهازك، وتُعتبر توقيت جمهورك. الأوقات العامة مأخوذة من دراسات كبيرة (Buffer وSprout Social وRivalIQ وLater) ومعدّلة لجمهور عربي، والدراسات نفسها تختلف فيما بينها. لذلك تتعلم الأداة أوقات حسابك من مشاهدات منشوراتك، وتعتمدها بدل العامة حين تجمع ما يكفي.</p>
+    </div>
+    <div class="card">
+      <h2>كل المنشورات</h2>
       <div class="tablewrap"><table>
-        <thead><tr><th>العنوان</th><th>المنصة</th><th>المشاهدات</th><th>الإعجابات</th><th>الوقت</th><th>الحالة</th></tr></thead>
+        <thead><tr><th>العنوان</th><th>المنصة</th><th>المشاهدات</th><th>الإعجابات</th><th>التعليقات</th><th>التفاعل</th><th>الوقت</th><th>الحالة</th></tr></thead>
         <tbody id="posts"></tbody>
       </table></div>
     </div>
@@ -473,6 +500,9 @@
       </div>
       <div class="row"><div class="field"><label>شكل النشر على يوتيوب</label><select data-set="youtube_mode"><option value="short">Short فقط (طولي)</option><option value="both">Short وفيديو عادي معا</option><option value="video">كما هو (العرضي يُنشر فيديو عادي)</option></select></div><div class="field"><label>طريقة النشر على تيك توك</label><select data-set="tiktok_mode"><option value="direct">نشر مباشر (عام بعد مراجعة تيك توك، وإلا خاص)</option><option value="draft">إرسال لصندوق تيك توك ثم تنشره أنت عاما بضغطة</option></select></div></div>
       <div class="toggle"><input type="checkbox" id="mom" data-set="momentum.enabled"><label for="mom">عند ارتفاع المشاهدات انشر المقطع التالي فورا</label></div>
+      <div class="toggle"><input type="checkbox" id="smart" data-set="smart_timing.enabled"><label for="smart">في أوقات الذروة انشر المقطع التالي فورا بدون انتظار الفاصل المعتاد</label></div>
+      <div class="toggle"><input type="checkbox" id="peaksonly" data-set="smart_timing.peaks_only"><label for="peaksonly">انشر من الطابور في أوقات الذروة فقط (المجدولة تُنشر في موعدها دائما)</label></div>
+      <div class="row"><div class="field small"><label>أقل فاصل بين منشورين في الذروة (دقيقة)</label><input data-set="smart_timing.peak_gap_minutes" type="number" min="15"></div></div>
     </div>
 
     <div class="card">
@@ -662,6 +692,7 @@ function openTab(tab) {
   $$("#nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
   $$(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + tab));
   if (tab === "settings" || tab === "accounts") loadSettings();
+  if (tab === "posts") loadInsights();
   store("tab", tab);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -868,12 +899,14 @@ function renderPosts(s) {
   const sig = JSON.stringify(s.posts);
   if (body.dataset.sig === sig) return;
   body.dataset.sig = sig;
-  if (!s.posts.length) { body.replaceChildren(el("tr", {}, el("td", { colspan: "6", class: "muted", text: "لم يُنشر شيء بعد." }))); return; }
+  if (!s.posts.length) { body.replaceChildren(el("tr", {}, el("td", { colspan: "8", class: "muted", text: "لم يُنشر شيء بعد." }))); return; }
   body.replaceChildren(...s.posts.map(r => el("tr", {}, [
     el("td", { text: (r.parent_id ? "↳ " : "") + (r.title || "") }),
     el("td", { text: PLATFORMS[r.platform] || r.platform }),
     el("td", { class: "num", text: r.views == null ? "—" : r.views.toLocaleString("en") }),
     el("td", { class: "num", text: r.likes == null ? "—" : r.likes.toLocaleString("en") }),
+    el("td", { class: "num", text: r.comments == null ? "—" : r.comments.toLocaleString("en") }),
+    el("td", { class: "num", text: r.views ? (100 * ((r.likes || 0) + (r.comments || 0) + (r.shares || 0)) / r.views).toFixed(1) + "%" : "—" }),
     el("td", { class: "num", text: fmtWhen(r.published_at) }),
     el("td", {}, r.retrying ? el("span", { class: "badge warn", text: "يعيد المحاولة…" })
       : r.error ? el("span", { class: "row", style: "gap:6px;flex-wrap:nowrap;align-items:center" }, [
@@ -1135,6 +1168,45 @@ $$("[data-disconnect]").forEach(b => b.addEventListener("click", async () => {
   await act("/api/disconnect", { platform: p }, "فُصل " + PLATFORMS[p]);
   accountMsg(p, "");
 }));
+
+// ---------------------------------------------------------------- insights
+const fmtNum = n => n == null ? "—" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "K" : n.toLocaleString("en");
+const hh = h => { const x = ((h % 24) + 24) % 24; return (x % 12 || 12) + (x < 12 ? " ص" : " م"); };
+async function loadInsights() {
+  let d;
+  try { d = await api("/api/insights", {}); } catch (e) { return; }
+  const eng = Object.entries(d.engagement);
+  $("#eng").replaceChildren(...(eng.length ? eng.map(([p, t]) => el("div", { class: "tile" }, [
+    el("div", { class: "sub", text: PLATFORMS[p] || p }),
+    el("div", { class: "big", text: t.rate == null ? fmtNum(t.likes) + " إعجاب" : t.rate + "%" }),
+    el("div", { class: "sub", text: (t.rate == null ? "" : "نسبة التفاعل · ") + t.posts + " منشور · " + fmtNum(t.views) + " مشاهدة · " + fmtNum(t.likes) + " إعجاب · " + fmtNum(t.comments) + " تعليق" })]))
+    : [el("div", { class: "muted small", text: "لا توجد أرقام بعد. تقرأ الأداة المشاهدات والإعجابات كل نصف ساعة للمنشورات من آخر 3 أيام." })]));
+  $("#eng-note").textContent = "نسبة التفاعل = (الإعجابات + التعليقات + المشاركات) ÷ المشاهدات. تيك توك يعطي الأرقام فقط للمقاطع المنشورة عاما، وبصلاحية video.list.";
+  const on = d.peak_now;
+  $("#peak").replaceChildren(el("div", { class: "peaknow " + (on ? "on" : "off") }, [
+    el("b", { text: on ? "الآن وقت ذروة" : "الآن ليس وقت ذروة" }),
+    el("span", { class: "small", text: on ? "المقطع التالي في الطابور يُنشر الآن، بفاصل لا يقل عن الحد الأدنى المحدد في الإعدادات." :
+      d.next_peak_minutes != null ? "الذروة القادمة بعد " + (d.next_peak_minutes >= 60 ? Math.floor(d.next_peak_minutes / 60) + " ساعة و" : "") + (d.next_peak_minutes % 60) + " دقيقة" : "" }),
+    el("span", { class: "badge", text: d.source === "own" ? "من بيانات حسابك" : "من الدراسات العامة" })]));
+  const own = [];
+  if (d.learned.length) {
+    own.push(el("h3", { text: "أفضل أوقات حسابك (من منشوراتك)", style: "font-size:15px;margin:4px 0 6px" }));
+    d.learned.slice(0, 6).forEach(x => own.push(el("div", { class: "slot" }, [
+      el("span", { text: hh(x.start) + " – " + hh(x.end) }),
+      el("span", { class: x.ratio >= 1.15 ? "badge ok" : x.ratio < 0.85 ? "badge bad" : "badge", text: "×" + x.ratio + " من المعتاد · " + x.posts + " منشور" })])));
+    if (d.learned_days.length) own.push(el("div", { class: "muted small", style: "margin-top:8px", text: "أفضل الأيام لحسابك: " + d.learned_days.slice(0, 3).map(x => x.name + " (×" + x.ratio + ")").join("، ") }));
+  } else {
+    own.push(el("div", { class: "muted small", text: "تتعلم الأداة أوقات حسابك: " + d.measured + " من " + d.needed + " منشورا مقاسا. حتى ذلك تعتمد الأوقات العامة أدناه." }));
+  }
+  $("#own").replaceChildren(...own);
+  $("#guide").replaceChildren(...Object.values(d.guide).map(g => el("div", { class: "g" }, [
+    el("h3", { text: g.name }),
+    ...g.peaks.map(x => el("div", { class: "slot" }, [el("b", { text: hh(x.start) + " – " + hh(x.end) }), el("span", { class: "muted", text: x.note })])),
+    el("div", { class: "small", style: "margin-top:8px" }, [el("b", { text: "أفضل الأيام: " }), g.days.join("، ")]),
+    el("ul", {}, g.notes.map(n => el("li", { text: n })))])));
+}
+setInterval(() => { if ($("#tab-posts").classList.contains("active")) loadInsights(); }, 60000);
+if ($("#tab-posts").classList.contains("active")) loadInsights();
 
 // ---------------------------------------------------------------- backup
 async function backupInfo() {

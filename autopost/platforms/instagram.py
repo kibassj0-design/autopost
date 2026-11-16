@@ -332,9 +332,17 @@ def publish(path, text, cfg):
 
 def stats(remote_id):
     from . import check
-    r = check(requests.get(f"{_base()}/{remote_id}/insights", timeout=30, params={
-        "metric": "views,likes,comments,shares",
-        "access_token": config.env("IG_ACCESS_TOKEN")}), "Instagram insights")
+    token = config.env("IG_ACCESS_TOKEN")
+    r = requests.get(f"{_base()}/{remote_id}/insights", timeout=30, params={
+        "metric": "views,likes,comments,shares", "access_token": token})
+    if r.status_code >= 400:
+        # Views need the instagram_manage_insights permission; likes and comments
+        # come with the basic one, so engagement is still tracked without it.
+        basic = check(requests.get(f"{_base()}/{remote_id}", timeout=30, params={
+            "fields": "like_count,comments_count", "access_token": token}),
+            "Instagram likes").json()
+        return {"views": None, "likes": int(basic.get("like_count") or 0),
+                "comments": int(basic.get("comments_count") or 0), "shares": 0}
     out = {"views": 0, "likes": 0, "comments": 0, "shares": 0}
     for item in r.json().get("data", []):
         if "total_value" in item:
