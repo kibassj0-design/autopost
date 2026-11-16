@@ -4,125 +4,261 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>autopost</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap">
 <style>
   :root {
-    --bg: #0f1216; --panel: #171b21; --panel2: #1e242c; --line: #2a323c;
-    --text: #e8eaed; --muted: #97a1ad; --accent: #4f8cff; --accent-ink: #fff;
-    --ok: #3ecf8e; --warn: #f0b429; --bad: #ff6b6b;
+    --bg: #0d1117; --bg2: #10151d; --panel: #151b24; --panel2: #1b2330; --line: #243041;
+    --line-soft: #1d2735; --text: #e6eaf0; --muted: #8b97a8; --faint: #5d6a7c;
+    --accent: #7c9cff; --accent2: #a78bfa; --accent-ink: #0b1020; --accent-soft: rgba(124, 156, 255, .14);
+    --ok: #4ade9b; --ok-soft: rgba(74, 222, 155, .12); --warn: #f5c451; --warn-soft: rgba(245, 196, 81, .12);
+    --bad: #ff7a85; --bad-soft: rgba(255, 122, 133, .12);
+    --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 8px 28px rgba(0,0,0,.28);
+    --radius: 16px; --ease: cubic-bezier(.2, .8, .2, 1);
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f6fa; --bg2: #eef1f6; --panel: #ffffff; --panel2: #f3f5f9; --line: #dfe4ec;
+    --line-soft: #e9edf3; --text: #1b2230; --muted: #5f6b7d; --faint: #9aa4b2;
+    --accent: #4f6ef7; --accent2: #7c5cf0; --accent-ink: #ffffff; --accent-soft: rgba(79, 110, 247, .1);
+    --ok: #16a36a; --ok-soft: rgba(22, 163, 106, .1); --warn: #b7791f; --warn-soft: rgba(183, 121, 31, .1);
+    --bad: #d6455b; --bad-soft: rgba(214, 69, 91, .09);
+    --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 6px 20px rgba(16, 24, 40, .06);
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 15px/1.6 "Segoe UI", Tahoma, "Noto Sans Arabic", sans-serif; }
-  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-           padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
-           position: sticky; top: 0; z-index: 5; }
-  header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
-  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-inline-start: auto; }
-  .chip { font-size: 12.5px; padding: 3px 10px; border-radius: 999px;
-          border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
-  .chip.on { color: var(--ok); border-color: #2c6b50; }
-  .chip.off { color: var(--bad); border-color: #6b3434; }
-  nav { display: flex; gap: 4px; padding: 0 20px; background: var(--panel);
-        border-bottom: 1px solid var(--line); overflow-x: auto; }
-  nav button { background: none; border: 0; color: var(--muted); padding: 11px 16px;
-               font: inherit; cursor: pointer; border-bottom: 2px solid transparent;
-               white-space: nowrap; }
-  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
-  main { max-width: 1000px; margin: 0 auto; padding: 20px 16px 60px; }
-  .tab { display: none; } .tab.active { display: block; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-          padding: 18px; margin-bottom: 16px; }
-  .card h2 { font-size: 16px; margin: 0 0 12px; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; background: radial-gradient(1200px 600px at 100% -10%, var(--accent-soft), transparent 60%), var(--bg);
+         background-attachment: fixed; color: var(--text);
+         font: 15px/1.65 "IBM Plex Sans Arabic", "Segoe UI", Tahoma, sans-serif;
+         -webkit-font-smoothing: antialiased; transition: background-color .3s var(--ease), color .3s var(--ease); }
+  a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+  ::selection { background: var(--accent-soft); }
+
+  /* ---- layout */
+  .app { display: grid; grid-template-columns: 236px 1fr; min-height: 100vh; }
+  aside { position: sticky; top: 0; height: 100vh; padding: 22px 14px; display: flex; flex-direction: column;
+          gap: 6px; border-inline-end: 1px solid var(--line-soft); background: color-mix(in srgb, var(--bg2) 80%, transparent);
+          backdrop-filter: blur(10px); }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 10px 18px; font-weight: 700; font-size: 18px; letter-spacing: .3px; }
+  .logo { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+          background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 6px 18px var(--accent-soft); }
+  .logo svg { width: 16px; height: 16px; }
+  nav#nav { display: flex; flex-direction: column; gap: 3px; }
+  nav#nav button { display: flex; align-items: center; gap: 11px; width: 100%; padding: 10px 12px; border: 0; border-radius: 11px;
+                   background: transparent; color: var(--muted); font: inherit; cursor: pointer; text-align: start;
+                   transition: background .2s var(--ease), color .2s var(--ease), transform .15s var(--ease); }
+  nav#nav button svg { width: 19px; height: 19px; flex: none; opacity: .85; }
+  nav#nav button:hover { background: var(--panel2); color: var(--text); }
+  nav#nav button.active { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+  nav#nav button.active svg { color: var(--accent); opacity: 1; }
+  nav#nav button .count { margin-inline-start: auto; font-size: 12px; background: var(--panel2); color: var(--muted);
+                          border-radius: 999px; padding: 0 8px; min-width: 22px; text-align: center; }
+  nav#nav button .count:empty { display: none; }
+  .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding: 10px 4px 0; }
+  .chips { display: flex; flex-direction: column; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; padding: 5px 11px; border-radius: 999px;
+          border: 1px solid var(--line); color: var(--muted); white-space: nowrap; background: var(--panel);
+          transition: color .25s, border-color .25s, background .25s; }
+  .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+  .chip.on { color: var(--text); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+  .chip.on::before { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+  .chip.off::before { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
+  .theme { align-self: flex-start; }
+  main { padding: 28px clamp(16px, 3vw, 40px) 80px; max-width: 1080px; width: 100%; }
+  .page-head { display: flex; align-items: end; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+  .page-head h1 { margin: 0; font-size: 24px; font-weight: 700; }
+  .page-head p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+
+  /* ---- tabs */
+  .tab { display: none; }
+  .tab.active { display: block; animation: pageIn .38s var(--ease); }
+  @keyframes pageIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* ---- cards */
+  .card { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius);
+          padding: 20px; margin-bottom: 18px; box-shadow: var(--shadow); transition: background .3s, border-color .3s; }
+  .card h2 { font-size: 16.5px; margin: 0 0 14px; font-weight: 600; }
   .card h3 { font-size: 14px; margin: 18px 0 8px; color: var(--muted); font-weight: 600; }
-  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .card-head h2 { margin: 0; flex: 1 1 auto; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
   .grow { flex: 1 1 260px; min-width: 0; }
-  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
-  input, select { width: 100%; background: var(--panel2); color: var(--text);
-                  border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
-                  font: inherit; }
-  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+  input, select, textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+         border-radius: 11px; padding: 10px 12px; font: inherit; transition: border-color .2s, box-shadow .2s, background .2s; }
+  textarea { resize: vertical; min-height: 84px; }
+  input:hover, select:hover, textarea:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
   input[dir=ltr], .ltr { direction: ltr; text-align: left; }
-  input[type=checkbox] { width: auto; margin-inline-end: 6px; transform: scale(1.2); }
+  input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
   .field { flex: 1 1 200px; min-width: 0; margin-bottom: 12px; }
-  .field.small { flex: 0 1 130px; }
-  button.btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
-               border-radius: 8px; padding: 9px 16px; font: inherit; cursor: pointer;
-               white-space: nowrap; }
-  button.btn:hover { border-color: var(--muted); }
-  button.btn.primary { background: var(--accent); border-color: var(--accent);
-                       color: var(--accent-ink); font-weight: 600; }
-  button.btn.danger { color: var(--bad); }
-  button.btn.sm { padding: 5px 11px; font-size: 13px; }
-  button:disabled { opacity: .5; cursor: default; }
+  .field.small { flex: 0 1 170px; }
+
+  /* ---- buttons */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; background: var(--panel2); color: var(--text);
+         border: 1px solid var(--line); border-radius: 11px; padding: 10px 17px; font: inherit; font-weight: 500;
+         cursor: pointer; white-space: nowrap;
+         transition: background .2s var(--ease), border-color .2s var(--ease), transform .12s var(--ease), box-shadow .2s, opacity .2s; }
+  .btn:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+  .btn:active { transform: scale(.97); }
+  .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); border-color: transparent; color: #fff; font-weight: 600;
+                 box-shadow: 0 6px 18px var(--accent-soft); }
+  .btn.primary:hover { box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 35%, transparent); }
+  .btn.danger { color: var(--bad); }
+  .btn.danger:hover { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+  .btn.ghost { background: transparent; }
+  .btn.sm { padding: 6px 12px; font-size: 13px; border-radius: 9px; }
+  .btn:disabled { opacity: .5; cursor: default; transform: none; }
+  .btn svg { width: 16px; height: 16px; }
+
+  /* ---- lists */
   .muted { color: var(--muted); } .small { font-size: 13px; }
-  .empty { color: var(--muted); padding: 10px 0; }
-  .item { border-top: 1px solid var(--line); padding: 12px 0; }
-  .item:first-child { border-top: 0; padding-top: 0; }
+  .empty { color: var(--muted); padding: 22px 6px; text-align: center; font-size: 14px; }
+  .empty svg { display: block; width: 34px; height: 34px; margin: 0 auto 8px; opacity: .45; }
+  .item { padding: 14px; border-radius: 13px; border: 1px solid var(--line-soft); background: var(--bg2); margin-top: 10px;
+          transition: border-color .25s, background .25s, opacity .25s, transform .25s; }
+  .item:first-child { margin-top: 0; }
+  .item:hover { border-color: var(--line); }
+  .item.enter { animation: itemIn .42s var(--ease) both; }
+  .item.leave { opacity: 0; transform: translateY(-6px) scale(.98); }
+  @keyframes itemIn { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
   .item .top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .item .title { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
-  .bar { height: 8px; background: var(--panel2); border-radius: 999px; overflow: hidden;
-         margin-top: 8px; }
-  .bar > i { display: block; height: 100%; background: var(--accent); width: 0;
-             transition: width .4s; }
-  .bar.busy > i { width: 35%; animation: slide 1.4s infinite ease-in-out; }
-  @keyframes slide { 0% { margin-inline-start: -35%; } 100% { margin-inline-start: 100%; } }
-  @media (prefers-reduced-motion: reduce) { .bar.busy > i { animation: none; width: 100%; opacity: .5; } }
-  .note { font-size: 13px; padding: 6px 10px; border-radius: 8px; margin-top: 8px;
-          background: #2b2412; color: var(--warn); overflow-wrap: anywhere; }
-  .note.bad { background: #2d1717; color: var(--bad); }
-  .note.ok { background: #13281f; color: var(--ok); }
-  .banner { padding: 12px 14px; border-radius: 10px; margin-bottom: 16px;
-            background: #2b2412; color: var(--warn); border: 1px solid #5c4a17; }
+  .item .name { font-weight: 600; }
+  .item .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 9px; border-radius: 999px;
+           background: var(--panel2); color: var(--muted); border: 1px solid var(--line-soft); }
+  .badge.ok { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+  .badge.warn { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+  .badge.bad { color: var(--bad); background: var(--bad-soft); border-color: transparent; }
+  .badge.info { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+  .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+  .bar { height: 6px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin-top: 12px; position: relative; }
+  .bar > i { display: block; height: 100%; width: 0; border-radius: 999px;
+             background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .6s var(--ease); }
+  .bar.busy > i { width: 32%; position: absolute; inset-inline-start: 0; animation: slide 1.5s infinite var(--ease); }
+  @keyframes slide { 0% { inset-inline-start: -32%; } 100% { inset-inline-start: 100%; } }
+  .note { font-size: 13px; padding: 8px 12px; border-radius: 10px; margin-top: 10px; background: var(--warn-soft);
+          color: var(--warn); overflow-wrap: anywhere; }
+  .note.bad { background: var(--bad-soft); color: var(--bad); }
+  .note.ok { background: var(--ok-soft); color: var(--ok); }
+  .timings { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .banner { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 14px; margin-bottom: 18px;
+            background: var(--warn-soft); color: var(--text); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
+  .banner svg { width: 20px; height: 20px; color: var(--warn); flex: none; margin-top: 2px; }
   .tablewrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: start; padding: 9px 8px; border-top: 1px solid var(--line);
-           vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; border-top: 0; white-space: nowrap; }
+  th, td { text-align: start; padding: 11px 10px; border-top: 1px solid var(--line-soft); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; border-top: 0; white-space: nowrap; font-size: 13px; }
+  tbody tr { transition: background .2s; } tbody tr:hover { background: var(--bg2); }
   td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
-  a { color: #7fb0ff; }
-  .log { font: 12.5px/1.7 Consolas, "Courier New", monospace; direction: ltr; text-align: left;
-         max-height: 62vh; overflow: auto; background: #0b0d10; border-radius: 8px; padding: 12px;
-         white-space: pre-wrap; overflow-wrap: anywhere; }
+  .log { font: 12.5px/1.75 ui-monospace, Consolas, monospace; direction: ltr; text-align: left; max-height: 66vh; overflow: auto;
+         background: var(--bg2); border: 1px solid var(--line-soft); border-radius: 12px; padding: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .log .WARNING { color: var(--warn); } .log .ERROR { color: var(--bad); }
-  .saved { color: var(--ok); margin-inline-start: 12px; }
-  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line);
-           border-radius: 12px; padding: 14px; max-width: 94vw; }
-  dialog::backdrop { background: rgba(0, 0, 0, .7); }
-  dialog video { display: block; max-width: 86vw; max-height: 74vh; border-radius: 8px;
-                 background: #000; }
-  .toggle { display: flex; align-items: center; gap: 4px; margin-inline-end: 16px; }
-  .toggle label { margin: 0; color: var(--text); font-size: 14px; }
-  .acct-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .toggle { display: flex; align-items: center; gap: 8px; margin-inline-end: 18px; margin-bottom: 6px; }
+  .toggle label { margin: 0; color: var(--text); font-size: 14px; cursor: pointer; }
+  .acct-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .acct-head h2 { margin: 0; }
   .acct-head .grow { flex: 1; }
-  ol.steps { margin: 6px 0 14px; padding-inline-start: 22px; color: var(--muted); font-size: 14px; }
-  ol.steps li { margin: 3px 0; }
+  ol.steps { margin: 6px 0 16px; padding-inline-start: 22px; color: var(--muted); font-size: 14px; }
+  ol.steps li { margin: 4px 0; }
   ol.steps b { color: var(--text); font-weight: 600; }
-  code { direction: ltr; unicode-bidi: embed; background: var(--panel2); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  code { direction: ltr; unicode-bidi: embed; background: var(--panel2); padding: 1px 6px; border-radius: 6px; font-size: 13px; }
   .card > .muted.small { margin-top: 10px; }
-  .finish { margin-top: 12px; padding: 12px; border: 1px dashed var(--accent); border-radius: 10px; }
+  .finish { margin-top: 14px; padding: 14px; border: 1px dashed var(--accent); border-radius: 12px; background: var(--accent-soft); }
+  .savebar { position: sticky; bottom: 16px; display: flex; gap: 10px; align-items: center; padding: 12px 14px;
+             background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(10px);
+             border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); z-index: 4; }
+
+  /* ---- schedule */
+  .drop { border: 1.5px dashed var(--line); border-radius: 14px; padding: 26px 16px; text-align: center; cursor: pointer;
+          background: var(--bg2); transition: border-color .2s, background .2s, transform .2s var(--ease); }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop.over { transform: scale(1.01); }
+  .drop svg { width: 30px; height: 30px; color: var(--accent); }
+  .drop .file { font-weight: 600; margin-top: 6px; overflow-wrap: anywhere; }
+  .day { margin: 18px 4px 8px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .day:first-child { margin-top: 0; }
+  .when { font-variant-numeric: tabular-nums; }
+
+  /* ---- dialogs and toasts */
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 18px; padding: 20px;
+           max-width: min(560px, 94vw); width: 100%; box-shadow: 0 24px 60px rgba(0,0,0,.4); }
+  dialog.video { max-width: 94vw; width: auto; }
+  dialog[open] { animation: dlgIn .3s var(--ease); }
+  dialog::backdrop { background: rgba(5, 8, 12, .55); backdrop-filter: blur(3px); animation: fade .3s; }
+  @keyframes dlgIn { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: none; } }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  dialog h2 { margin: 0 0 14px; font-size: 17px; }
+  dialog video { display: block; max-width: 88vw; max-height: 76vh; border-radius: 12px; background: #000; }
+  .dlg-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  #toasts { position: fixed; bottom: 22px; left: 22px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }
+  .toast { padding: 11px 16px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow);
+           font-size: 14px; max-width: 360px; animation: toastIn .35s var(--ease); transition: opacity .3s, transform .3s; }
+  .toast.ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .toast.bad { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+  .toast.out { opacity: 0; transform: translateY(8px); }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+  /* ---- small screens: the sidebar becomes a top bar */
+  @media (max-width: 860px) {
+    .app { grid-template-columns: 1fr; }
+    aside { position: sticky; top: 0; height: auto; z-index: 10; flex-direction: row; align-items: center; padding: 10px 12px;
+            border-inline-end: 0; border-bottom: 1px solid var(--line-soft); overflow-x: auto; gap: 8px; }
+    .brand { padding: 0 6px 0 0; }
+    nav#nav { flex-direction: row; }
+    nav#nav button { width: auto; padding: 8px 11px; }
+    nav#nav button span.lbl { display: none; }
+    nav#nav button.active span.lbl { display: inline; }
+    .side-foot { display: none; }
+    main { padding-top: 18px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>autopost</h1>
-  <div class="chips" id="chips"></div>
-</header>
-<nav id="nav">
-  <button data-tab="home" class="active">الرئيسية</button>
-  <button data-tab="posts">المنشورات</button>
-  <button data-tab="accounts">الحسابات</button>
-  <button data-tab="settings">الإعدادات</button>
-  <button data-tab="log">السجل</button>
-</nav>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-6h4v6"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M8 3v4M16 3v4M3.5 10h17"/><path d="M12 13.5v3l2 1"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-log" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5z"/><path d="M8 9h8M8 13h8M8 17h5"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5 5h14l2 8v6H3v-6z"/></symbol>
+</svg>
+<div class="app">
+<aside>
+  <div class="brand"><span class="logo"><svg><use href="#i-play"/></svg></span>autopost</div>
+  <nav id="nav">
+    <button data-tab="home" class="active"><svg><use href="#i-home"/></svg><span class="lbl">الرئيسية</span><span class="count" id="c-jobs"></span></button>
+    <button data-tab="schedule"><svg><use href="#i-cal"/></svg><span class="lbl">الجدولة</span><span class="count" id="c-sched"></span></button>
+    <button data-tab="posts"><svg><use href="#i-chart"/></svg><span class="lbl">المنشورات</span></button>
+    <button data-tab="accounts"><svg><use href="#i-user"/></svg><span class="lbl">الحسابات</span></button>
+    <button data-tab="settings"><svg><use href="#i-gear"/></svg><span class="lbl">الإعدادات</span></button>
+    <button data-tab="log"><svg><use href="#i-log"/></svg><span class="lbl">السجل</span></button>
+  </nav>
+  <div class="side-foot">
+    <div class="chips" id="chips"></div>
+    <button class="btn ghost sm theme" id="theme"><svg><use href="#i-moon"/></svg><span>الوضع الفاتح</span></button>
+  </div>
+</aside>
 <main>
   <section class="tab active" id="tab-home">
+    <div class="page-head"><div><h1>الرئيسية</h1><p>الصق رابطا، والأداة تصنع المقاطع وتنشرها.</p></div></div>
     <div id="banner"></div>
     <div class="card">
       <h2>رابط جديد</h2>
       <div class="row">
         <div class="grow">
-          <label for="url">رابط فيديو يوتيوب أو بث تويتش</label>
+          <label for="url">رابط فيديو يوتيوب، أو قناة تويتش تبث الآن</label>
           <input id="url" dir="ltr" placeholder="https://www.youtube.com/watch?v=...">
         </div>
         <button class="btn primary" id="go">اصنع المقاطع</button>
@@ -134,31 +270,58 @@
           <div class="field small"><label for="end">إلى الوقت</label><input id="end" dir="ltr" placeholder="نهاية الفيديو"></div>
         </div>
       </details>
-      <div id="go-msg"></div>
     </div>
     <div class="card">
-      <div class="row" style="align-items:center;margin-bottom:10px">
-        <h2 style="margin:0" class="grow">الشغل الجاري</h2>
-        <span class="muted small" id="encoder"></span>
-        <button class="btn sm" id="clear-jobs">مسح المنتهية</button>
+      <div class="card-head">
+        <h2>الشغل الجاري</h2>
+        <span class="badge" id="encoder"></span>
+        <button class="btn sm ghost" id="clear-jobs">مسح المنتهية</button>
       </div>
-      <div id="jobs"><div class="empty">لا يوجد شغل بعد. الصق رابطا في الأعلى.</div></div>
+      <div id="jobs"></div>
     </div>
     <div class="card">
-      <div class="row" style="align-items:center;margin-bottom:10px">
-        <h2 style="margin:0" class="grow">طابور النشر</h2>
-        <button class="btn sm" id="folder">فتح المجلد</button>
+      <div class="card-head">
+        <h2>طابور النشر</h2>
+        <button class="btn sm ghost" id="folder">فتح المجلد</button>
         <button class="btn sm" id="pause"></button>
         <button class="btn sm danger" id="clear-queue">حذف الكل</button>
       </div>
-      <div class="muted small" id="pubstatus"></div>
-      <div id="queue" style="margin-top:12px"></div>
+      <div class="muted small" id="pubstatus" style="margin:-6px 0 12px"></div>
+      <div id="queue"></div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-schedule">
+    <div class="page-head"><div><h1>الجدولة</h1><p>أضف فيديوهاتك واختر يوم ووقت نشرها، والأداة تنشرها وحدها في موعدها.</p></div></div>
+    <div class="card">
+      <h2>فيديو جديد للجدولة</h2>
+      <input type="file" id="s-file" accept="video/*" hidden>
+      <div class="drop" id="drop">
+        <svg><use href="#i-upload"/></svg>
+        <div>اسحب الفيديو إلى هنا، أو <b style="color:var(--accent)">اضغط للاختيار</b></div>
+        <div class="file" id="s-name"></div>
+        <div class="bar" id="s-bar" hidden><i></i></div>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <div class="field"><label for="s-at">يوم ووقت النشر</label><input type="datetime-local" id="s-at"></div>
+        <div class="field">
+          <label>المنصات</label>
+          <div class="row" id="s-platforms" style="gap:4px;padding-top:6px"></div>
+        </div>
+      </div>
+      <div class="field"><label for="s-caption">الكابشن (اختياري)</label>
+        <textarea id="s-caption" placeholder="اتركه فارغا ليكتبه الذكاء الاصطناعي، أو اكتب نصك والهاشتاغات وسيُنشر كما هو."></textarea></div>
+      <div class="row"><button class="btn primary" id="s-add" disabled><svg><use href="#i-cal"/></svg>جدولة</button></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>المنشورات المجدولة</h2></div>
+      <div id="sched"></div>
     </div>
   </section>
 
   <section class="tab" id="tab-posts">
+    <div class="page-head"><div><h1>المنشورات</h1><p>كل ما نُشر، مع المشاهدات والإعجابات.</p></div></div>
     <div class="card">
-      <h2>ما تم نشره</h2>
       <div class="tablewrap"><table>
         <thead><tr><th>العنوان</th><th>المنصة</th><th>المشاهدات</th><th>الإعجابات</th><th>الوقت</th><th>الحالة</th></tr></thead>
         <tbody id="posts"></tbody>
@@ -167,6 +330,7 @@
   </section>
 
   <section class="tab" id="tab-accounts">
+    <div class="page-head"><div><h1>الحسابات</h1><p>اربط حساباتك مرة واحدة، والخطوات مكتوبة بجانب كل منصة.</p></div></div>
     <div class="card">
       <div class="acct-head"><h2>يوتيوب</h2><span class="chip" data-conn="youtube"></span><span class="grow"></span><button class="btn sm danger" data-disconnect="youtube" hidden>فصل</button></div>
       <ol class="steps">
@@ -228,6 +392,7 @@
   </section>
 
   <section class="tab" id="tab-settings">
+    <div class="page-head"><div><h1>الإعدادات</h1><p>المفاتيح وخيارات المقاطع والنشر.</p></div></div>
     <div class="card">
       <h2>الذكاء الاصطناعي</h2>
       <p class="muted small" style="margin-top:0">يكفي مفتاح واحد. يختار اللحظات، يترجم الكتابة على الفيديو، ويكتب الكابشن. إذا أضفت أكثر من مفتاح مجاني تنتقل الأداة تلقائيا للتالي عند انتهاء حصة ما قبله، بهذا الترتيب.</p>
@@ -258,7 +423,7 @@
       </div>
       <div class="row">
         <div class="field"><label>لغة الكتابة على الفيديو</label><select data-set="clipper.captions_language"><option value="swap">عكس لغة المتحدث (إنكليزي ← عربي)</option><option value="original">نفس لغة المتحدث</option><option value="ar">عربي دائما</option><option value="en">إنكليزي دائما</option></select></div>
-        <div class="field"><label>دقة تفريغ الكلام (الأكبر أدق وأبطأ)</label><select data-set="clipper.whisper_model"><option>tiny</option><option>base</option><option>small</option><option>medium</option><option>large-v3</option></select></div>
+        <div class="field"><label>السرعة</label><select data-set="speed_mode"><option value="fast">سريع (الافتراضي)</option><option value="balanced">متوازن: تفريغ كلام أدق وأبطأ</option><option value="accurate">أدق: الأبطأ</option></select></div>
         <div class="field"><label>تفريغ الكلام على</label><select data-set="clipper.whisper_device"><option value="cpu">المعالج (مضمون)</option><option value="gpu">كرت الشاشة NVIDIA (أسرع، يحتاج CUDA)</option></select></div>
         <div class="field"><label>التأطير عند التحويل إلى طولي</label><select data-set="clipper.layout"><option value="auto">تلقائي (على وجه المتكلم إن وُجد)</option><option value="fit">المشهد كاملا بخلفية مموّهة</option><option value="crop">قص من الوسط</option></select></div>
       </div>
@@ -286,32 +451,49 @@
       <div class="toggle"><input type="checkbox" id="mom" data-set="momentum.enabled"><label for="mom">عند ارتفاع المشاهدات انشر المقطع التالي فورا</label></div>
     </div>
 
-    <div class="row" style="align-items:center">
+    <div class="savebar">
       <button class="btn primary" id="save">حفظ</button>
       <button class="btn" id="check">فحص الإعداد</button>
-      <span id="save-msg"></span>
     </div>
     <div id="check-out" style="margin-top:14px"></div>
   </section>
 
+  
   <section class="tab" id="tab-log">
-    <div class="card"><h2>السجل</h2><div class="log" id="log"></div></div>
+    <div class="page-head"><div><h1>السجل</h1><p>كل ما تفعله الأداة بالتفصيل، لإرساله عند أي مشكلة.</p></div></div>
+    <div class="card"><div class="log" id="log"></div></div>
   </section>
 </main>
+</div>
 
-<dialog id="player">
+<dialog id="player" class="video">
   <video id="video" controls playsinline></video>
-  <div style="margin-top:10px;text-align:end"><button class="btn" id="close-player">إغلاق</button></div>
+  <div class="dlg-actions"><button class="btn" id="close-player">إغلاق</button></div>
 </dialog>
+
+<dialog id="sdlg">
+  <h2 id="sdlg-title">جدولة</h2>
+  <div class="field"><label for="d-at">يوم ووقت النشر</label><input type="datetime-local" id="d-at"></div>
+  <div class="field" id="d-plat-wrap"><label>المنصات</label><div class="row" id="d-platforms" style="gap:4px;padding-top:6px"></div></div>
+  <div class="field"><label for="d-caption">الكابشن (اختياري)</label>
+    <textarea id="d-caption" placeholder="فارغ = يكتبه الذكاء الاصطناعي"></textarea></div>
+  <div class="dlg-actions">
+    <button class="btn ghost" id="d-cancel">إلغاء</button>
+    <button class="btn primary" id="d-ok">حفظ</button>
+  </div>
+</dialog>
+
+<div id="toasts"></div>
 
 <script>
 const TOKEN = "__TOKEN__";
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const STAGES = { queued: "بالانتظار", waiting: "بانتظار دوره (رابط آخر يستخدم المعالج الآن)", live: "يتابع البث المباشر",
-  cancelled: "أُلغي", download: "تنزيل الفيديو", audio: "تجهيز الصوت",
+  cancelled: "أُلغي", download: "تنزيل", audio: "تجهيز الصوت", title: "يبدأ",
   transcribe: "تفريغ الكلام", pick: "الذكاء الاصطناعي يختار أفضل اللحظات", translate: "ترجمة الكتابة",
   render: "تصيير المقاطع", done: "اكتمل" };
+const STEP_NAMES = { download: "تنزيل", audio: "صوت", transcribe: "تفريغ", pick: "اختيار", translate: "ترجمة", render: "تصيير", waiting: "انتظار" };
 const WARNINGS = { no_captions: "المقاطع بدون كتابة: فشل تفريغ الكلام",
   no_ai_pick: "اللحظات اختيرت من الصوت والشات فقط (الذكاء الاصطناعي غير متاح)",
   no_translation: "الكتابة بقيت بلغة المتحدث (الترجمة غير متاحة)",
@@ -319,6 +501,7 @@ const WARNINGS = { no_captions: "المقاطع بدون كتابة: فشل تف
 const AI_NAMES = { claude: "Claude", gemini: "Gemini", mistral: "Mistral", openrouter: "OpenRouter", groq: "Groq", cerebras: "Cerebras" };
 const PLATFORMS = { youtube: "يوتيوب", instagram: "انستغرام", tiktok: "تيك توك" };
 
+// ---------------------------------------------------------------- helpers
 async function api(path, body) {
   const opt = { headers: { "X-Token": TOKEN } };
   if (body !== undefined) {
@@ -332,10 +515,11 @@ async function api(path, body) {
   return data;
 }
 
-// Build elements with text set as text, never as HTML: titles come from other people's videos.
+// Text is always set as text, never as HTML: titles come from other people's videos.
 function el(tag, props = {}, kids = []) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue;
     if (k === "class") n.className = v;
     else if (k === "text") n.textContent = v;
     else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
@@ -344,154 +528,323 @@ function el(tag, props = {}, kids = []) {
   for (const kid of [].concat(kids)) if (kid) n.append(kid);
   return n;
 }
+function icon(id) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const u = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  u.setAttribute("href", "#" + id); s.append(u); return s;
+}
 function note(text, kind = "") { return el("div", { class: "note " + kind, text }); }
+function empty(text, ic = "i-inbox") { return el("div", { class: "empty" }, [icon(ic), text]); }
 function fmtDur(s) { if (s == null) return ""; s = Math.round(s); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
-function fmtWhen(ts) { return new Date(ts * 1000).toLocaleString("ar", { dateStyle: "short", timeStyle: "short" }); }
+function fmtWhen(ts) { return new Date(ts * 1000).toLocaleString("ar", { dateStyle: "medium", timeStyle: "short" }); }
+function fmtTime(ts) { return new Date(ts * 1000).toLocaleTimeString("ar", { hour: "numeric", minute: "2-digit" }); }
+const rtf = new Intl.RelativeTimeFormat("ar", { numeric: "auto" });
+function fromNow(ts, now) {
+  const d = ts - now, a = Math.abs(d);
+  if (a < 60) return d >= 0 ? "خلال لحظات" : "قبل لحظات";
+  if (a < 3600) return rtf.format(Math.round(d / 60), "minute");
+  if (a < 86400) return rtf.format(Math.round(d / 3600), "hour");
+  return rtf.format(Math.round(d / 86400), "day");
+}
+function dayLabel(ts) {
+  const d = new Date(ts * 1000), t = new Date();
+  const start = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((start(d) - start(t)) / 86400000);
+  if (diff === 0) return "اليوم";
+  if (diff === 1) return "غدا";
+  if (diff === -1) return "أمس";
+  return d.toLocaleDateString("ar", { weekday: "long", day: "numeric", month: "long" });
+}
+function toLocalInput(date) {
+  const p = n => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}`;
+}
+function defaultTime() {
+  const d = new Date(Date.now() + 60 * 60 * 1000);
+  d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0);
+  return toLocalInput(d);
+}
+function toast(text, kind = "") {
+  const t = el("div", { class: "toast " + kind, text });
+  $("#toasts").append(t);
+  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, 3200);
+}
+function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
 
-$("#nav").addEventListener("click", e => {
-  const tab = e.target.dataset.tab;
-  if (!tab) return;
-  $$("#nav button").forEach(b => b.classList.toggle("active", b === e.target));
+// Keyed list: unchanged items stay as they are (no flicker), new ones animate in,
+// removed ones fade out.
+function keyed(box, items, key, sig, build, emptyNode) {
+  const old = new Map([...box.children].filter(n => n.dataset.key).map(n => [n.dataset.key, n]));
+  if (!items.length) {
+    if (!box.querySelector(":scope > .empty")) box.replaceChildren(emptyNode());
+    return;
+  }
+  box.querySelector(":scope > .empty")?.remove();
+  let prev = null;
+  for (const it of items) {
+    const k = String(key(it)), sg = sig(it);
+    let n = old.get(k);
+    if (!n) {
+      n = build(it); n.dataset.key = k; n.dataset.sig = sg;
+      if (box.dataset.ready) n.classList.add("enter");
+    } else {
+      old.delete(k);
+      if (n.dataset.sig !== sg) { const m = build(it); m.dataset.key = k; m.dataset.sig = sg; n.replaceWith(m); n = m; }
+    }
+    const next = prev ? prev.nextSibling : box.firstChild;
+    if (n !== next) box.insertBefore(n, next);
+    prev = n;
+    if (n._update) n._update(it);
+  }
+  for (const n of old.values()) { n.classList.add("leave"); n.removeAttribute("data-key"); setTimeout(() => n.remove(), 260); }
+  box.dataset.ready = "1";
+}
+
+// ---------------------------------------------------------------- theme and tabs
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  $("#theme span").textContent = t === "light" ? "الوضع الداكن" : "الوضع الفاتح";
+}
+applyTheme(store("theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+$("#theme").addEventListener("click", () => {
+  const t = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  applyTheme(t); store("theme", t);
+});
+function openTab(tab) {
+  $$("#nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
   $$(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + tab));
   if (tab === "settings" || tab === "accounts") loadSettings();
-});
+  store("tab", tab);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+$("#nav").addEventListener("click", e => { const b = e.target.closest("button"); if (b) openTab(b.dataset.tab); });
 
+// ---------------------------------------------------------------- rendering
 let state = null;
 
 function render() {
   const s = state;
-  // header chips
-  const chips = $("#chips");
-  chips.replaceChildren(
-    el("span", { class: "chip " + (s.ai.length ? "on" : "off"),
-                 text: "الذكاء الاصطناعي: " + (s.ai.length ? AI_NAMES[s.ai[0]] + (s.ai.length > 1 ? " +" + (s.ai.length - 1) : "") : "غير مضبوط"),
-                 title: s.ai.map(n => AI_NAMES[n]).join(" ← ") }),
+  $("#chips").replaceChildren(
+    el("span", { class: "chip " + (s.ai.length ? "on" : "off"), title: s.ai.map(n => AI_NAMES[n]).join(" ← "),
+                 text: s.ai.length ? AI_NAMES[s.ai[0]] + (s.ai.length > 1 ? " +" + (s.ai.length - 1) : "") : "بلا ذكاء اصطناعي" }),
     ...Object.entries(PLATFORMS).map(([k, name]) =>
-      el("span", { class: "chip " + (s.connected[k] ? "on" : ""),
-                   text: name + (s.connected[k] ? " ✓" + (s.enabled.includes(k) ? "" : " (موقوف)") : " غير مربوط") })));
+      el("span", { class: "chip " + (s.connected[k] ? (s.enabled.includes(k) ? "on" : "") : "off"),
+                   text: name + (s.connected[k] ? (s.enabled.includes(k) ? "" : " (موقوف)") : " غير مربوط") })));
   $$("[data-conn]").forEach(c => {
     const p = c.dataset.conn, on = s.connected[p];
     c.className = "chip " + (on ? "on" : "off");
     c.textContent = on ? "مربوط" + (s.accounts[p] ? ": " + s.accounts[p] : "") : "غير مربوط";
   });
   $$("[data-disconnect]").forEach(b => { b.hidden = !s.connected[b.dataset.disconnect]; });
+  const running = s.jobs.filter(j => ["queued", "running"].includes(j.status)).length;
+  $("#c-jobs").textContent = running || "";
+  $("#c-sched").textContent = s.schedule.filter(x => x.status === "pending").length || "";
 
-  // banner
-  const banner = $("#banner");
   const msgs = [];
-  if (!s.ai.length) msgs.push("لم يُضبط مفتاح ذكاء اصطناعي: المقاطع ستُختار من الصوت فقط وبدون ترجمة.");
+  if (!s.ai.length) msgs.push("لم يُضبط مفتاح ذكاء اصطناعي: المقاطع ستُختار من الصوت فقط.");
   if (!s.publisher.has_account) msgs.push("لا يوجد حساب مربوط: المقاطع ستُصنع وتبقى في الطابور دون نشر.");
-  banner.replaceChildren(...(msgs.length ? [el("div", { class: "banner" }, [
-    el("div", { text: msgs.join(" ") }),
-    el("div", { class: "small", text: "الحسابات تُربط من تبويب «الحسابات»، والمفاتيح من «الإعدادات»." })])] : []));
+  const bsig = msgs.join("|");
+  if ($("#banner").dataset.sig !== bsig) {
+    $("#banner").dataset.sig = bsig;
+    $("#banner").replaceChildren(...(msgs.length ? [el("div", { class: "banner" }, [icon("i-warn"), el("div", {}, [
+      el("div", { text: msgs.join(" ") }),
+      el("div", { class: "small muted", text: "الحسابات من تبويب «الحسابات»، والمفاتيح من «الإعدادات»." })])])] : []));
+  }
 
-  // jobs
-  const jobs = $("#jobs");
-  if (!s.jobs.length) jobs.replaceChildren(el("div", { class: "empty", text: "لا يوجد شغل بعد. الصق رابطا في الأعلى." }));
-  else jobs.replaceChildren(...s.jobs.map(j => {
-    const running = j.status === "running";
-    let label = STAGES[j.stage] || j.stage;
-    if (j.stage === "render" && j.detail) label += " " + j.detail;
-    if (running && j.fraction != null && j.stage !== "render") label += " " + Math.round(j.fraction * 100) + "%";
-    if (j.stage === "live" && j.detail) label += ": " + j.detail.replace("min", "دقيقة مسجلة").replace("clips", "مقطع");
-    if (j.live && j.stopping && running) label = "تم إيقاف التسجيل، يقص الدقائق المسجلة";
-    if (j.stage === "download" && j.detail === "sections") label = "تنزيل مقاطع اللحظات فقط";
-    if (j.status === "done") label = "اكتمل: " + j.clips + " مقطع في الطابور";
-    if (j.status === "error") label = "فشل";
-    if (j.status === "cancelled") label = "أُلغي";
-    const secs = Math.max(0, Math.round(((j.ended || s.publisher.now) - j.began)));
-    label += " · " + Math.floor(secs / 60) + ":" + String(secs % 60).padStart(2, "0");
-    const active = running || j.status === "queued";
-    const bar = el("div", { class: "bar" + (running && j.fraction == null ? " busy" : "") }, el("i"));
-    if (j.fraction != null) bar.firstChild.style.width = Math.round(j.fraction * 100) + "%";
-    return el("div", { class: "item" }, [
-      el("div", { class: "top" }, [
-        el("div", { class: "title" }, [
-          el("div", { text: j.title || j.url, class: j.title ? "" : "ltr" }),
-          el("div", { class: "muted small", text: label })]),
-        active ? el("button", { class: "btn sm danger",
-          text: j.live ? (j.stopping ? "إلغاء نهائي" : "إيقاف البث") : "إلغاء",
-          onclick: () => {
-            const ask = !j.live ? "إلغاء هذا الرابط؟"
-              : j.stopping ? "إلغاء نهائي؟ الدقائق المسجلة التي لم تُقص بعد تُحذف."
-              : "إيقاف متابعة البث؟ التسجيل يتوقف الآن، والدقائق المسجلة تُقص كالعادة.";
-            if (confirm(ask)) act("/api/job/stop", { id: j.id });
-          } }) : null]),
-      active ? bar : null,
-      j.error ? note(j.error, "bad") : null,
-      ...j.warnings.map(w => {
-        const [code, ...rest] = w.split(": ");
-        const n = note(WARNINGS[code] || w);
-        // The technical reason, so it can be reported as-is.
-        if (rest.length) n.append(el("div", { class: "small ltr", style: "opacity:.75", text: rest.join(": ") }));
-        return n;
-      })]);
-  }));
+  renderJobs(s);
+  renderQueue(s);
+  renderSchedule(s);
+  renderPosts(s);
 
   $("#encoder").textContent = "الترميز: " + (s.encoder === "libx264" ? "المعالج" : "كرت الشاشة (" + s.encoder.replace("h264_", "") + ")");
   $("#clear-queue").hidden = !s.queue.length;
   $("#clear-jobs").hidden = !s.jobs.some(j => !["queued", "running"].includes(j.status));
 
-  // queue
+  const log = $("#log");
+  const last = s.logs.length ? s.logs[s.logs.length - 1] : null;
+  const lsig = s.logs.length + (last ? last.t + last.msg : "");
+  if (log.dataset.sig !== lsig) {
+    log.dataset.sig = lsig;
+    const pinned = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+    log.replaceChildren(...s.logs.map(l => el("div", { class: l.level, text: l.t + "  " + l.msg })));
+    if (pinned) log.scrollTop = log.scrollHeight;
+  }
+}
+
+function jobLabel(j, now) {
+  const running = j.status === "running";
+  let label = STAGES[j.stage] || j.stage;
+  if (j.stage === "download" && j.detail === "sections") label = "تنزيل مقاطع اللحظات فقط";
+  if (j.stage === "render" && j.detail) label += " " + j.detail;
+  if (running && j.fraction != null && j.stage !== "render") label += " " + Math.round(j.fraction * 100) + "%";
+  if (j.stage === "live" && j.detail) label += ": " + j.detail.replace("stopping", "يُنهي").replace("min", "دقيقة مسجلة").replace("clips", "مقطع");
+  if (j.live && j.stopping && running) label = "تم إيقاف التسجيل، يقص الدقائق المسجلة";
+  if (j.status === "done") label = j.clips ? "اكتمل: " + j.clips + " مقطع في الطابور" : "اكتمل: لا توجد لحظة قوية";
+  if (j.status === "error") label = "فشل";
+  if (j.status === "cancelled") label = "أُلغي";
+  return label + " · " + fmtDur(Math.max(0, (j.ended || now) - j.began));
+}
+
+function renderJobs(s) {
+  keyed($("#jobs"), s.jobs, j => j.id,
+    j => JSON.stringify([j.status, j.title, j.live, j.stopping, j.warnings, j.error, j.timings]),
+    j => {
+      const active = ["queued", "running"].includes(j.status);
+      const lbl = el("div", { class: "muted small" });
+      const bar = el("div", { class: "bar" }, el("i"));
+      const badge = j.status === "done" ? el("span", { class: "badge ok", text: "اكتمل" })
+        : j.status === "error" ? el("span", { class: "badge bad", text: "فشل" })
+        : j.status === "cancelled" ? el("span", { class: "badge", text: "أُلغي" })
+        : j.live ? el("span", { class: "badge bad", text: "● مباشر" }) : null;
+      const node = el("div", { class: "item" }, [
+        el("div", { class: "top" }, [
+          el("div", { class: "title" }, [
+            el("div", { class: "name" + (j.title ? "" : " ltr"), text: j.title || j.url }), lbl]),
+          badge,
+          active ? el("button", { class: "btn sm danger",
+            text: j.live ? (j.stopping ? "إلغاء نهائي" : "إيقاف البث") : "إلغاء",
+            onclick: () => {
+              const ask = !j.live ? "إلغاء هذا الرابط؟"
+                : j.stopping ? "إلغاء نهائي؟ الدقائق المسجلة التي لم تُقص بعد تُحذف."
+                : "إيقاف متابعة البث؟ التسجيل يتوقف الآن، والدقائق المسجلة تُقص كالعادة.";
+              if (confirm(ask)) act("/api/job/stop", { id: j.id });
+            } }) : null]),
+        active ? bar : null,
+        j.error ? note(j.error, "bad") : null,
+        ...j.warnings.map(w => {
+          const [code, ...rest] = w.split(": ");
+          const n = note(WARNINGS[code] || w);
+          if (rest.length) n.append(el("div", { class: "small ltr", style: "opacity:.7", text: rest.join(": ") }));
+          return n;
+        }),
+        !active && Object.keys(j.timings || {}).length ? el("div", { class: "timings" },
+          Object.entries(j.timings).filter(([, v]) => v > 0).map(([k, v]) =>
+            el("span", { class: "badge", text: (STEP_NAMES[k] || k) + " " + fmtDur(v) }))) : null]);
+      // Progress changes every refresh: update it in place so the bar glides.
+      node._update = jj => {
+        lbl.textContent = jobLabel(jj, state.publisher.now);
+        const busy = jj.status === "running" && jj.fraction == null;
+        bar.classList.toggle("busy", busy);
+        if (!busy) bar.firstChild.style.width = Math.round((jj.fraction || 0) * 100) + "%";
+      };
+      return node;
+    },
+    () => empty("لا يوجد شغل بعد. الصق رابطا في الأعلى."));
+}
+
+function renderQueue(s) {
   const p = s.publisher;
   $("#pause").textContent = p.paused ? "تشغيل النشر" : "إيقاف مؤقت";
   let status;
   if (!p.has_account) status = "النشر متوقف: لا يوجد حساب مربوط.";
   else if (p.paused) status = "النشر متوقف مؤقتا.";
   else if (p.current) status = "يُنشر الآن…";
-  else if (!s.queue.length) status = "الطابور فارغ.";
+  else if (!s.queue.length) status = "";
   else {
     const wait = Math.max(0, p.next_post_at - p.now);
-    status = wait > 0 ? "المنشور التالي بعد " + Math.ceil(wait / 60) + " دقيقة." : "المنشور التالي خلال لحظات.";
+    status = wait > 0 ? "المنشور التالي " + fromNow(p.next_post_at, p.now) + "." : "المنشور التالي خلال لحظات.";
   }
   $("#pubstatus").textContent = status;
-  const q = $("#queue");
-  q.replaceChildren(...s.queue.map(c => el("div", { class: "item" }, [
-    el("div", { class: "top" }, [
-      el("div", { class: "title" }, [
-        el("div", { text: c.title }),
-        el("div", { class: "muted small ltr", text: fmtDur(c.seconds) + "  " + c.name })]),
-      el("button", { class: "btn sm", text: "معاينة", onclick: () => play(c.name) }),
-      el("button", { class: "btn sm", text: "انشر الآن", onclick: () => act("/api/queue/publish", { name: c.name }) }),
-      el("button", { class: "btn sm danger", text: "حذف", onclick: () => {
-        if (confirm("حذف هذا المقطع نهائيا؟")) act("/api/queue/delete", { name: c.name }); } })])])));
+  keyed($("#queue"), s.queue, c => c.name, c => JSON.stringify([c.title, c.seconds]),
+    c => el("div", { class: "item" }, [
+      el("div", { class: "top" }, [
+        el("div", { class: "title" }, [
+          el("div", { class: "name", text: c.title }),
+          el("div", { class: "muted small ltr", text: fmtDur(c.seconds) + "  ·  " + c.name })]),
+        el("div", { class: "actions" }, [
+          el("button", { class: "btn sm", onclick: () => play(c.name, "inbox") }, [icon("i-play"), "معاينة"]),
+          el("button", { class: "btn sm", onclick: () => openDialog({ mode: "queue", name: c.name, title: c.title }) }, [icon("i-cal"), "جدولة"]),
+          el("button", { class: "btn sm", text: "انشر الآن", onclick: () => act("/api/queue/publish", { name: c.name }) }),
+          el("button", { class: "btn sm danger", text: "حذف", onclick: () => {
+            if (confirm("حذف هذا المقطع نهائيا؟")) act("/api/queue/delete", { name: c.name }); } })])])]),
+    () => empty("الطابور فارغ. المقاطع الجاهزة تظهر هنا قبل نشرها."));
+}
 
-  // posts
-  const posts = $("#posts");
-  if (!s.posts.length) posts.replaceChildren(el("tr", {}, el("td", { colspan: "6", class: "muted", text: "لم يُنشر شيء بعد." })));
-  else posts.replaceChildren(...s.posts.map(r => el("tr", {}, [
+function renderSchedule(s) {
+  const now = s.publisher.now;
+  const rows = [];
+  let day = null;
+  for (const x of s.schedule) {
+    const d = dayLabel(x.at);
+    if (d !== day) { rows.push({ kind: "day", key: "day-" + d, label: d }); day = d; }
+    rows.push({ kind: "item", key: "s-" + x.id, x });
+  }
+  keyed($("#sched"), rows, r => r.key,
+    r => r.kind === "day" ? r.label : JSON.stringify([r.x.status, r.x.at, r.x.caption, r.x.platforms, r.x.result, Math.floor((r.x.at - now) / 60)]),
+    r => {
+      if (r.kind === "day") return el("div", { class: "day", text: r.label });
+      const x = r.x;
+      const st = { pending: ["info", "مجدول " + fromNow(x.at, now)], publishing: ["warn", "يُنشر الآن…"],
+                   done: ["ok", "نُشر"], failed: ["bad", "فشل"] }[x.status] || ["", x.status];
+      const links = x.status === "done" && x.result ? Object.entries(x.result).filter(([, v]) => String(v).startsWith("http"))
+        .map(([k, v]) => el("a", { href: v, target: "_blank", rel: "noopener", class: "badge", text: (PLATFORMS[k] || k) + " ↗" })) : [];
+      const errs = x.result ? Object.entries(x.result).filter(([k, v]) => String(v).startsWith("FAILED") || k === "error")
+        .map(([k, v]) => note((PLATFORMS[k] || "") + " " + String(v).replace("FAILED: ", ""), "bad")) : [];
+      const pending = x.status === "pending" || x.status === "failed";
+      return el("div", { class: "item" }, [
+        el("div", { class: "top" }, [
+          el("div", { class: "title" }, [
+            el("div", { class: "name", text: x.title || x.name }),
+            el("div", { class: "meta" }, [
+              el("span", { class: "badge when", text: fmtTime(x.at) }),
+              el("span", { class: "badge " + st[0], text: st[1] }),
+              ...x.platforms.map(p => el("span", { class: "badge", text: PLATFORMS[p] || p })),
+              x.caption ? el("span", { class: "badge", text: "كابشنك" }) : el("span", { class: "badge", text: "كابشن تلقائي" }),
+              ...links])]),
+          el("div", { class: "actions" }, [
+            x.exists ? el("button", { class: "btn sm", onclick: () => play(x.name, "scheduled") }, [icon("i-play"), "معاينة"]) : null,
+            pending ? el("button", { class: "btn sm", text: "تعديل", onclick: () => openDialog({ mode: "edit", id: x.id, at: x.at, caption: x.caption, platforms: x.platforms, title: x.title }) }) : null,
+            pending ? el("button", { class: "btn sm", text: x.status === "failed" ? "أعد المحاولة" : "انشر الآن",
+              onclick: () => act("/api/schedule/now", { id: x.id }) }) : null,
+            x.status !== "publishing" ? el("button", { class: "btn sm danger", text: "حذف", onclick: () => {
+              if (confirm(x.status === "done" ? "إزالة من القائمة؟" : "حذف هذا المنشور المجدول وملفه؟")) act("/api/schedule/delete", { id: x.id }); } }) : null])]),
+        ...errs]);
+    },
+    () => empty("لا توجد منشورات مجدولة بعد.", "i-cal"));
+}
+
+function renderPosts(s) {
+  const body = $("#posts");
+  const sig = JSON.stringify(s.posts);
+  if (body.dataset.sig === sig) return;
+  body.dataset.sig = sig;
+  if (!s.posts.length) { body.replaceChildren(el("tr", {}, el("td", { colspan: "6", class: "muted", text: "لم يُنشر شيء بعد." }))); return; }
+  body.replaceChildren(...s.posts.map(r => el("tr", {}, [
     el("td", { text: (r.parent_id ? "↳ " : "") + (r.title || "") }),
     el("td", { text: PLATFORMS[r.platform] || r.platform }),
     el("td", { class: "num", text: r.views == null ? "—" : r.views.toLocaleString("en") }),
     el("td", { class: "num", text: r.likes == null ? "—" : r.likes.toLocaleString("en") }),
     el("td", { class: "num", text: fmtWhen(r.published_at) }),
-    el("td", {}, r.error ? el("span", { style: "color:var(--bad)", text: "فشل: " + r.error })
-      : r.url ? el("a", { href: r.url, target: "_blank", rel: "noopener", text: "فتح" })
-      : el("span", { text: "نُشر" }))])));
-
-  // log (stay pinned to the bottom unless the user scrolled up)
-  const log = $("#log");
-  const pinned = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
-  log.replaceChildren(...s.logs.map(l => el("div", { class: l.level, text: l.t + "  " + l.msg })));
-  if (pinned) log.scrollTop = log.scrollHeight;
+    el("td", {}, r.error ? el("span", { class: "badge bad", text: "فشل: " + r.error.slice(0, 80), title: r.error })
+      : r.url ? el("a", { href: r.url, target: "_blank", rel: "noopener", class: "badge ok", text: "فتح ↗" })
+      : el("span", { class: "badge ok", text: "نُشر" }))])));
 }
 
+let offline = false;
 async function refresh() {
-  try { state = await api("/api/state"); render(); }
-  catch (e) { $("#pubstatus").textContent = "انقطع الاتصال بالأداة. تأكد أن النافذة السوداء ما زالت مفتوحة."; }
+  try {
+    state = await api("/api/state");
+    if (offline) { offline = false; toast("عاد الاتصال بالأداة", "ok"); }
+    render();
+  } catch (e) {
+    if (!offline) { offline = true; toast("انقطع الاتصال بالأداة. تأكد أن النافذة السوداء ما زالت مفتوحة.", "bad"); }
+  }
 }
-async function act(path, body) {
-  try { await api(path, body); } catch (e) { alert(e.message); }
+async function act(path, body, okText) {
+  try { await api(path, body); if (okText) toast(okText, "ok"); } catch (e) { toast(e.message, "bad"); }
   refresh();
 }
 
+// ---------------------------------------------------------------- home actions
 $("#go").addEventListener("click", async () => {
-  const msg = $("#go-msg");
+  const btn = $("#go");
+  btn.disabled = true;
   try {
     await api("/api/clip", { url: $("#url").value, start: $("#start").value, end: $("#end").value });
     $("#url").value = "";
-    msg.replaceChildren();
-  } catch (e) { msg.replaceChildren(note(e.message, "bad")); }
+    toast("بدأ العمل على الرابط", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+  btn.disabled = false;
   refresh();
 });
 $("#url").addEventListener("keydown", e => { if (e.key === "Enter") $("#go").click(); });
@@ -499,24 +852,109 @@ $("#pause").addEventListener("click", () => act("/api/publisher", { paused: !sta
 $("#clear-jobs").addEventListener("click", () => act("/api/jobs/clear", {}));
 $("#clear-queue").addEventListener("click", () => {
   if (state && state.queue.length && confirm("حذف كل المقاطع (" + state.queue.length + ") من الطابور نهائيا؟"))
-    act("/api/queue/clear", {});
+    act("/api/queue/clear", {}, "حُذف الطابور");
 });
 $("#folder").addEventListener("click", () => act("/api/open-folder", { folder: "inbox" }));
 
-function play(name) {
+function play(name, where) {
   const v = $("#video");
-  v.src = "/media?name=" + encodeURIComponent(name) + "&t=" + encodeURIComponent(TOKEN);
+  v.src = "/media?name=" + encodeURIComponent(name) + "&in=" + where + "&t=" + encodeURIComponent(TOKEN);
   $("#player").showModal();
   v.play().catch(() => {});
 }
-function stopPlayer() { const v = $("#video"); v.pause(); v.removeAttribute("src"); v.load(); }
 $("#close-player").addEventListener("click", () => $("#player").close());
-$("#player").addEventListener("close", stopPlayer);
+$("#player").addEventListener("close", () => { const v = $("#video"); v.pause(); v.removeAttribute("src"); v.load(); });
 
-// ---- settings
+// ---------------------------------------------------------------- schedule
+function platformBoxes(box, chosen) {
+  const enabled = state ? state.enabled : ["youtube", "instagram", "tiktok"];
+  box.replaceChildren(...Object.entries(PLATFORMS).map(([k, name]) => {
+    const id = box.id + "-" + k;
+    return el("div", { class: "toggle" }, [
+      el("input", { type: "checkbox", id, value: k, checked: (chosen || enabled).includes(k) ? "" : null }),
+      el("label", { for: id, text: name })]);
+  }));
+}
+const chosenPlatforms = box => $$("input:checked", box).map(i => i.value);
+
+let pickedFile = null;
+function pickFile(f) {
+  if (!f) return;
+  if (!f.type.startsWith("video/") && !/\.(mp4|mov|mkv|webm|m4v|avi)$/i.test(f.name)) { toast("اختر ملف فيديو.", "bad"); return; }
+  pickedFile = f;
+  $("#s-name").textContent = f.name + "  ·  " + (f.size / 1048576).toFixed(1) + " MB";
+  $("#s-add").disabled = false;
+}
+$("#drop").addEventListener("click", () => $("#s-file").click());
+$("#s-file").addEventListener("change", e => pickFile(e.target.files[0]));
+["dragenter", "dragover"].forEach(ev => $("#drop").addEventListener(ev, e => { e.preventDefault(); $("#drop").classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => $("#drop").addEventListener(ev, e => { e.preventDefault(); $("#drop").classList.remove("over"); }));
+$("#drop").addEventListener("drop", e => pickFile(e.dataTransfer.files[0]));
+
+function upload(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/schedule/upload");
+    x.setRequestHeader("X-Token", TOKEN);
+    x.setRequestHeader("X-Filename", encodeURIComponent(file.name));
+    x.upload.onprogress = e => e.lengthComputable && onProgress(e.loaded / e.total);
+    x.onload = () => {
+      let data = {};
+      try { data = JSON.parse(x.responseText); } catch (e) {}
+      x.status === 200 ? resolve(data) : reject(new Error(data.error || "HTTP " + x.status));
+    };
+    x.onerror = () => reject(new Error("انقطع الرفع"));
+    x.send(file);
+  });
+}
+function checkTime(value) {
+  if (!value) throw new Error("اختر يوم ووقت النشر.");
+  const at = new Date(value).getTime() / 1000;
+  if (at < Date.now() / 1000 - 60 && !confirm("هذا الوقت مضى. يُنشر فورا؟")) throw new Error("");
+  return at;
+}
+$("#s-add").addEventListener("click", async () => {
+  const btn = $("#s-add"), bar = $("#s-bar");
+  try {
+    const at = checkTime($("#s-at").value);
+    const platforms = chosenPlatforms($("#s-platforms"));
+    if (!platforms.length) throw new Error("اختر منصة واحدة على الأقل.");
+    btn.disabled = true; bar.hidden = false;
+    const { file } = await upload(pickedFile, f => { bar.firstChild.style.width = Math.round(f * 100) + "%"; });
+    await api("/api/schedule/add", { file, at, caption: $("#s-caption").value, platforms });
+    toast("جُدول الفيديو: " + fmtWhen(at), "ok");
+    pickedFile = null; $("#s-file").value = ""; $("#s-name").textContent = ""; $("#s-caption").value = "";
+    $("#s-at").value = defaultTime();
+  } catch (e) { if (e.message) toast(e.message, "bad"); btn.disabled = !pickedFile; }
+  setTimeout(() => { bar.hidden = true; bar.firstChild.style.width = "0"; }, 600);
+  refresh();
+});
+
+let dlg = null;
+function openDialog(opts) {
+  dlg = opts;
+  $("#sdlg-title").textContent = opts.mode === "queue" ? "جدولة: " + opts.title : "تعديل: " + (opts.title || "");
+  $("#d-at").value = opts.at ? toLocalInput(new Date(opts.at * 1000)) : defaultTime();
+  $("#d-caption").value = opts.caption || "";
+  $("#d-plat-wrap").hidden = opts.mode === "queue";
+  platformBoxes($("#d-platforms"), opts.platforms);
+  $("#sdlg").showModal();
+}
+$("#d-cancel").addEventListener("click", () => $("#sdlg").close());
+$("#d-ok").addEventListener("click", async () => {
+  try {
+    const at = checkTime($("#d-at").value);
+    if (dlg.mode === "queue") await api("/api/schedule/from-queue", { name: dlg.name, at, caption: $("#d-caption").value });
+    else await api("/api/schedule/update", { id: dlg.id, at, caption: $("#d-caption").value, platforms: chosenPlatforms($("#d-platforms")) });
+    $("#sdlg").close();
+    toast(dlg.mode === "queue" ? "نُقل إلى الجدولة: " + fmtWhen(at) : "حُفظ الموعد الجديد", "ok");
+  } catch (e) { if (e.message) toast(e.message, "bad"); }
+  refresh();
+});
+
+// ---------------------------------------------------------------- settings
 async function loadSettings() {
-  const s = await api("/api/settings");
-  fillSettings(s);
+  try { fillSettings(await api("/api/settings")); } catch (e) { toast(e.message, "bad"); }
 }
 function fillSettings(s) {
   $$("[data-key]").forEach(i => {
@@ -545,63 +983,50 @@ function collectSettings() {
   values.platforms = $$("[data-platform]").filter(i => i.checked).map(i => i.dataset.platform);
   return { keys, values };
 }
-async function save() {
-  const msg = $("#save-msg");
+async function save(quiet) {
   try {
     fillSettings(await api("/api/settings", collectSettings()));
-    msg.replaceChildren(el("span", { class: "saved", text: "تم الحفظ" }));
-    setTimeout(() => msg.replaceChildren(), 2500);
+    if (!quiet) toast("تم الحفظ", "ok");
     refresh();
     return true;
-  } catch (e) {
-    msg.replaceChildren(el("span", { style: "color:var(--bad);margin-inline-start:12px", text: e.message }));
-    return false;
-  }
+  } catch (e) { toast(e.message, "bad"); return false; }
 }
-$("#save").addEventListener("click", save);
-
+$("#save").addEventListener("click", () => save());
 $("#check").addEventListener("click", async () => {
   const out = $("#check-out"), btn = $("#check");
-  if (!await save()) return;
+  if (!await save(true)) return;
   btn.disabled = true;
   out.replaceChildren(el("div", { class: "muted", text: "يفحص…" }));
   try {
     const { results } = await api("/api/check", {});
-    out.replaceChildren(...results.map(r => note((r.ok ? "✓ " : "✗ ") + r.name + (r.detail ? ": " + r.detail : ""), r.ok ? "ok" : "bad")));
-    out.lastChild?.classList.add("ltr");
-    $$(".note", out).forEach(n => { n.dir = "ltr"; n.style.textAlign = "left"; });
+    out.replaceChildren(...results.map(r => {
+      const n = note((r.ok ? "✓ " : "✗ ") + r.name + (r.detail ? ": " + r.detail : ""), r.ok ? "ok" : "bad");
+      n.dir = "ltr"; n.style.textAlign = "left"; return n;
+    }));
   } catch (e) { out.replaceChildren(note(e.message, "bad")); }
   btn.disabled = false;
 });
 
 function accountMsg(platform, text, kind) {
-  const box = $(`[data-msg="${platform}"]`);
-  box.replaceChildren(...(text ? [note(text, kind)] : []));
+  $(`[data-msg="${platform}"]`).replaceChildren(...(text ? [note(text, kind)] : []));
 }
-
 $$("[data-auth]").forEach(b => b.addEventListener("click", async () => {
   const platform = b.dataset.auth;
-  if (!await save()) return;
+  if (!await save(true)) return;
   try {
     const { url } = await api("/api/auth/start", { platform });
     window.open(url, "_blank", "noopener");
-    if (platform === "tiktok") {
-      $("#tt-finish").hidden = false;
-      accountMsg(platform, "");
-      $("#tt-pasted").focus();
-    } else accountMsg(platform, "وافق في الصفحة التي فُتحت. بعدها يتغير الوضع هنا إلى «مربوط» تلقائيا.", "ok");
+    if (platform === "tiktok") { $("#tt-finish").hidden = false; accountMsg(platform, ""); $("#tt-pasted").focus(); }
+    else accountMsg(platform, "وافق في الصفحة التي فُتحت. بعدها يتغير الوضع هنا إلى «مربوط» تلقائيا.", "ok");
   } catch (e) { accountMsg(platform, "أدخل مفاتيح هذه المنصة أولا. (" + e.message + ")", "bad"); }
 }));
-
 $("#tt-done").addEventListener("click", async () => {
   try {
     await api("/api/auth/finish", { platform: "tiktok", pasted: $("#tt-pasted").value });
     $("#tt-finish").hidden = true; $("#tt-pasted").value = "";
-    accountMsg("tiktok", "تم ربط تيك توك.", "ok");
-    refresh();
+    accountMsg("tiktok", "تم ربط تيك توك.", "ok"); refresh();
   } catch (e) { accountMsg("tiktok", e.message, "bad"); }
 });
-
 $("#ig-connect").addEventListener("click", async () => {
   const btn = $("#ig-connect");
   btn.disabled = true;
@@ -614,16 +1039,19 @@ $("#ig-connect").addEventListener("click", async () => {
   } catch (e) { accountMsg("instagram", e.message, "bad"); }
   btn.disabled = false;
 });
-
 $$("[data-disconnect]").forEach(b => b.addEventListener("click", async () => {
   const p = b.dataset.disconnect;
   if (!confirm("فصل " + PLATFORMS[p] + "؟ لن يُنشر عليه حتى تربطه من جديد.")) return;
-  try { await api("/api/disconnect", { platform: p }); accountMsg(p, ""); } catch (e) { alert(e.message); }
-  refresh();
+  await act("/api/disconnect", { platform: p }, "فُصل " + PLATFORMS[p]);
+  accountMsg(p, "");
 }));
 
-refresh();
-setInterval(refresh, 2000);
+// ---------------------------------------------------------------- start
+$("#s-at").value = defaultTime();
+refresh().then(() => { platformBoxes($("#s-platforms")); });
+const lastTab = store("tab");
+if (lastTab && $("#tab-" + lastTab)) openTab(lastTab);
+setInterval(refresh, 1500);
 </script>
 </body>
 </html>

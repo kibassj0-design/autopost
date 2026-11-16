@@ -1,4 +1,5 @@
 """The publishing loop: posts what is queued in inbox/, spaced out, and tracks momentum."""
+import json
 import logging
 import shutil
 import threading
@@ -89,6 +90,30 @@ class Publisher:
         self._sizes.pop(path, None)
         self.current = None
 
+    def _publish_scheduled(self, row):
+        path = Path(row["path"])
+        self.current = path.name
+        self._db.execute("UPDATE schedule SET status='publishing' WHERE id=?", (row["id"],))
+        self._db.commit()
+        status, result = "done", {}
+        try:
+            if not path.exists():
+                raise RuntimeError("the video file is gone")
+            platforms = [p for p in json.loads(row["platforms"] or "[]")
+                         if config.connected(p)] or None
+            _, result, _ = pipeline.publish(path, self.cfg, note=row["note"] or "",
+                                            platforms=platforms, db=self._db,
+                                            own_caption=row["caption"])
+            if all(str(r).startswith("FAILED") for r in result.values()):
+                status = "failed"
+        except Exception as e:
+            log.error("Scheduled post %s: %s", path.name, e)
+            status, result = "failed", {"error": str(e)[:300]}
+        self._db.execute("UPDATE schedule SET status=?, result=? WHERE id=?",
+                         (status, json.dumps(result, ensure_ascii=False), row["id"]))
+        self._db.commit()
+        self.current = None
+
     def step(self):
         if self._db is None:  # SQLite connections belong to the thread that made them
             self._db = store.connect()
@@ -113,12 +138,21 @@ class Publisher:
             self.release, self.first, self._logged = False, None, None
             self._publish(path)
 
+        # Scheduled posts go out at their time, whatever the gap between queue posts
+        # and even while the queue is paused: the user picked that time.
+        if accounts:
+            due = self._db.execute(
+                "SELECT * FROM schedule WHERE status='pending' AND at<=? ORDER BY at LIMIT 1",
+                (time.time(),)).fetchone()
+            if due:
+                self._publish_scheduled(due)
+
         if time.time() - self.last_renew > 3600:
             self.last_renew = time.time()
             try:
                 instagram.refresh_if_due(log)
             except Exception as e:
-                log.warning("Instagram token renewal: %s", e)
+                log.warning("Instagram token renewal: %s", type(e).__name__)
 
         if (accounts and m["enabled"]
                 and time.time() - self.last_check >= m["check_every_minutes"] * 60):

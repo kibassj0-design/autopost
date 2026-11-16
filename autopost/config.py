@@ -21,6 +21,7 @@ DEFAULTS = {
     "orientation": "original",
     "fps": 60,
     "resolution": "1080",
+    "speed_mode": "fast",
     "encoder": "auto",
     "youtube_mode": "short",
     "youtube_privacy": "public",

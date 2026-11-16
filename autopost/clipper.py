@@ -237,6 +237,15 @@ def top_peaks(curve, count, gap, floor=None, strict=False):
 
 # ---------------------------------------------------------------- transcript
 
+SPEED_MODELS = {"fast": "base", "balanced": "small", "accurate": "medium"}
+
+
+def whisper_model(cfg):
+    """The speech model for the chosen speed: 'fast' (default) is several times quicker
+    than 'balanced', and the AI cleans up its occasional mishearing when translating."""
+    return SPEED_MODELS.get(cfg.get("speed_mode"), cfg["clipper"].get("whisper_model", "base"))
+
+
 def transcribe(wav, model_name, language, tell=lambda *a: None, device="cpu"):
     """([{start, end, text, words: [{start, end, word}]}], spoken language code).
     The processor is the default: on Windows a graphics card without its CUDA
@@ -808,7 +817,7 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
         try:
             tell("transcribe", 0, meta["title"])
             with _heavy(tell, "transcribe"):
-                segments, spoken = transcribe(wav, c["whisper_model"], c["language"], tell,
+                segments, spoken = transcribe(wav, whisper_model(cfg), c["language"], tell,
                                               c.get("whisper_device", "cpu"))
             log.info("Spoken language: %s, %d lines", spoken, len(segments))
         except Exception as e:

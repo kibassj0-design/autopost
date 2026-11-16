@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS videos(
 CREATE TABLE IF NOT EXISTS posts(
   id INTEGER PRIMARY KEY, video_id INTEGER, platform TEXT, remote_id TEXT,
   url TEXT, published_at REAL, error TEXT);
+CREATE TABLE IF NOT EXISTS schedule(
+  id INTEGER PRIMARY KEY, path TEXT, title TEXT, caption TEXT, note TEXT,
+  platforms TEXT, at REAL, status TEXT DEFAULT 'pending', result TEXT, created REAL);
 CREATE TABLE IF NOT EXISTS stats(
   post_id INTEGER, ts REAL, views INTEGER, likes INTEGER, comments INTEGER, shares INTEGER);
 """

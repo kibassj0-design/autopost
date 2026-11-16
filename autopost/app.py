@@ -2,6 +2,7 @@
 manage the queue, see what was published and edit keys and settings."""
 import collections
 import json
+import re
 import logging
 import mimetypes
 import os
@@ -31,12 +32,16 @@ PLAIN_KEYS = ["YT_CLIENT_ID", "IG_USER_ID", "IG_GRAPH_HOST", "TT_CLIENT_KEY",
 SETTINGS = {
     "platforms": list, "language": str, "post_language": str, "niche": str, "brand_voice": str,
     "default_hashtags": list, "orientation": str, "ai_provider": str,
-    "min_minutes_between_posts": int, "fps": int, "resolution": str, "encoder": str, "youtube_mode": str, "tiktok_mode": str,
+    "min_minutes_between_posts": int, "fps": int, "resolution": str, "speed_mode": str, "encoder": str, "youtube_mode": str, "tiktok_mode": str,
     "clipper.min_score": int, "clipper.min_seconds": int, "clipper.max_seconds": int,
     "clipper.whisper_model": str, "clipper.whisper_device": str, "clipper.captions": bool,
     "clipper.captions_language": str, "clipper.layout": str,
     "momentum.enabled": bool, "momentum.views_per_hour": int,
 }
+
+
+TIMED = ("download", "audio", "transcribe", "pick", "translate", "render", "waiting")
+SCHEDULED = "scheduled"  # folder under data/ holding videos waiting for their time
 
 
 class LogBuffer(logging.Handler):
@@ -45,8 +50,9 @@ class LogBuffer(logging.Handler):
         self.lines = collections.deque(maxlen=400)
 
     def emit(self, record):
+        msg = re.sub(r"(access_token|key|token)=[^&\s)'\"]+", r"\1=***", record.getMessage())
         self.lines.append({"t": time.strftime("%H:%M:%S", time.localtime(record.created)),
-                           "level": record.levelname, "msg": record.getMessage()})
+                           "level": record.levelname, "msg": msg})
 
 
 class App:
@@ -69,7 +75,7 @@ class App:
         job = {"id": len(self.jobs) + 1, "url": url, "title": "", "status": "queued",
                "stage": "queued", "fraction": None, "detail": "", "warnings": [],
                "error": "", "clips": 0, "start": start, "end": end, "live": False,
-               "began": time.time(), "ended": None}
+               "began": time.time(), "ended": None, "timings": {}, "stage_at": time.time()}
         self.jobs.append(job)
         self.stops[job["id"]] = threading.Event()
         self.cancels[job["id"]] = threading.Event()
@@ -103,6 +109,12 @@ class App:
                 if detail not in job["warnings"]:
                     job["warnings"].append(detail)
                 return
+            if stage != job["stage"]:  # time spent per step, shown when the job ends
+                now = time.time()
+                if job["stage"] in TIMED:
+                    job["timings"][job["stage"]] = round(
+                        job["timings"].get(job["stage"], 0) + now - job["stage_at"])
+                job["stage_at"] = now
             job["stage"], job["fraction"] = stage, fraction
             if stage in ("audio", "transcribe") and detail and not job["live"]:
                 job["title"] = detail
@@ -111,17 +123,100 @@ class App:
             elif stage == "render":
                 job["detail"] = detail
 
+        result = {}
         try:
             clips = clipper.run(job["url"], self.cfg, start=job["start"], end=job["end"],
                                 progress=progress, stop=self.stops[job["id"]],
                                 cancel=self.cancels[job["id"]])
-            job.update(status="done", stage="done", fraction=1, clips=len(clips))
+            result = dict(status="done", stage="done", fraction=1, clips=len(clips))
         except clipper.Cancelled:
-            job.update(status="cancelled", stage="cancelled")
+            result = dict(status="cancelled", stage="cancelled")
         except Exception as e:
             log.error("Could not process %s: %s", job["url"], e)
-            job.update(status="error", error=str(e)[:400])
+            result = dict(status="error", error=str(e)[:400])
         job["ended"] = time.time()
+        if job["stage"] in TIMED:  # close the last step's timing
+            job["timings"][job["stage"]] = round(
+                job["timings"].get(job["stage"], 0) + job["ended"] - job["stage_at"])
+        job.update(result)
+
+    # ---- schedule
+
+    def schedule_dir(self):
+        d = config.DATA / SCHEDULED
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def schedule_add(self, file, at, caption="", platforms=None, note="", title=""):
+        path = self.schedule_dir() / Path(file).name
+        if not path.is_file():
+            raise ValueError("الملف غير موجود، ارفعه من جديد.")
+        db = store.connect()
+        db.execute("INSERT INTO schedule(path,title,caption,note,platforms,at,status,created)"
+                   " VALUES(?,?,?,?,?,?, 'pending', ?)",
+                   (str(path), title or re.sub(r"^\d+-", "", path.stem), caption, note,
+                    json.dumps(platforms or self.cfg["platforms"]), float(at), time.time()))
+        db.commit()
+        db.close()
+
+    def schedule_from_queue(self, name, at, caption=""):
+        """Move a queued clip (with its note and YouTube copy) out of the queue to its time."""
+        src = self.publisher.inbox / Path(name).name
+        if not src.is_file():
+            raise ValueError("المقطع لم يعد في الطابور.")
+        if src.name == self.publisher.current:
+            raise ValueError("هذا المقطع يُنشر الآن.")
+        dst = self.schedule_dir() / f"{int(time.time())}-{src.name}"
+        note_file = src.with_suffix(".txt")
+        note = note_file.read_text(encoding="utf-8") if note_file.exists() else ""
+        title = note.splitlines()[0].removeprefix("Clip title: ") if note else ""
+        alt = src.with_suffix(".alt.mp4")
+        shutil.move(src, dst)
+        if alt.exists():
+            shutil.move(alt, dst.with_suffix(".alt.mp4"))
+        note_file.unlink(missing_ok=True)
+        self.schedule_add(dst.name, at, caption, None, note, title)
+
+    def schedule_update(self, item_id, at=None, caption=None, platforms=None):
+        db = store.connect()
+        row = db.execute("SELECT * FROM schedule WHERE id=?", (item_id,)).fetchone()
+        if row is None or row["status"] not in ("pending", "failed"):
+            db.close()
+            raise ValueError("لا يمكن تعديل هذا المنشور الآن.")
+        db.execute("UPDATE schedule SET at=?, caption=?, platforms=?, status='pending' WHERE id=?",
+                   (float(at if at is not None else row["at"]),
+                    caption if caption is not None else row["caption"],
+                    json.dumps(platforms) if platforms is not None else row["platforms"],
+                    item_id))
+        db.commit()
+        db.close()
+
+    def schedule_delete(self, item_id):
+        db = store.connect()
+        row = db.execute("SELECT * FROM schedule WHERE id=?", (item_id,)).fetchone()
+        if row is not None:
+            if row["status"] == "publishing":
+                db.close()
+                raise ValueError("هذا المنشور يُنشر الآن.")
+            if row["status"] == "pending":  # a published one keeps its file for the record
+                for f in (Path(row["path"]), Path(row["path"]).with_suffix(".alt.mp4")):
+                    f.unlink(missing_ok=True)
+            db.execute("DELETE FROM schedule WHERE id=?", (item_id,))
+            db.commit()
+        db.close()
+
+    def schedule_list(self):
+        db = store.connect()
+        rows = [dict(r) for r in db.execute(
+            "SELECT * FROM schedule WHERE status!='done' OR at > ? ORDER BY at",
+            (time.time() - 7 * 86400,))]
+        db.close()
+        for r in rows:
+            r["platforms"] = json.loads(r["platforms"] or "[]")
+            r["result"] = json.loads(r["result"]) if r["result"] else None
+            r["name"] = Path(r["path"]).name
+            r["exists"] = Path(r["path"]).is_file()
+        return rows
 
     # ---- state for the page
 
@@ -172,6 +267,7 @@ class App:
             "enabled": self.cfg["platforms"],
             "ai": llm.providers(self.cfg),
             "encoder": video.encoder()[0],
+            "schedule": self.schedule_list(),
             "logs": list(self.logs.lines)[-200:],
         }
 
@@ -330,7 +426,7 @@ def make_handler(app):
             if url.path == "/api/settings":
                 return self._send(200, app.settings())
             if url.path == "/media":
-                return self._media(query.get("name", [""])[0])
+                return self._media(query.get("name", [""])[0], query.get("in", ["inbox"])[0])
             self._send(404, {"error": "not found"})
 
         def _youtube_return(self, query):
@@ -347,8 +443,9 @@ def make_handler(app):
                     f"<h2>{message}</h2><p><a style='color:#6ea8ff' href='/'>فتح الأداة</a></p>")
             self._send(200, html, "text/html; charset=utf-8")
 
-        def _media(self, name):
-            path = app.publisher.inbox / Path(name).name  # queued clips only
+        def _media(self, name, where="inbox"):
+            folder = app.schedule_dir() if where == "scheduled" else app.publisher.inbox
+            path = folder / Path(name).name  # queued or scheduled videos only
             if not path.is_file():
                 return self._send(404, {"error": "not found"})
             size = path.stat().st_size
@@ -384,6 +481,8 @@ def make_handler(app):
             url = urllib.parse.urlparse(self.path)
             if not self._local() or not self._authorized({}):
                 return self._send(403, {"error": "forbidden"})
+            if url.path == "/api/schedule/upload":
+                return self._upload()
             try:
                 length = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(length) or b"{}")
@@ -393,6 +492,34 @@ def make_handler(app):
             except Exception as e:
                 log.error("app: %s", e)
                 self._send(500, {"error": str(e)})
+
+        def _upload(self):
+            """Stream a video from the browser to data/scheduled/ without holding it in memory."""
+            name = urllib.parse.unquote(self.headers.get("X-Filename") or "video.mp4")
+            name = re.sub(r"[^\w.\- ]+", "_", Path(name).name, flags=re.UNICODE)[-120:]
+            if Path(name).suffix.lower() not in (".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"):
+                return self._send(400, {"error": "اختر ملف فيديو (mp4 أو mov أو mkv ...)."})
+            length = int(self.headers.get("Content-Length") or 0)
+            dst = app.schedule_dir() / f"{int(time.time() * 1000)}-{name}"
+            part = dst.with_name(dst.name + ".part")
+            try:
+                with open(part, "wb") as f:
+                    left = length
+                    while left > 0:
+                        chunk = self.rfile.read(min(1 << 20, left))
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        left -= len(chunk)
+                if left > 0:
+                    raise RuntimeError("upload interrupted")
+                part.rename(dst)
+                video.probe(dst)  # a real video, or say so now rather than at posting time
+            except Exception as e:
+                part.unlink(missing_ok=True)
+                dst.unlink(missing_ok=True)
+                return self._send(400, {"error": f"تعذّر رفع الفيديو: {e}"})
+            return self._send(200, {"file": dst.name})
 
         def _act(self, path, body):
             pub = app.publisher
@@ -409,6 +536,18 @@ def make_handler(app):
             elif path == "/api/queue/publish":
                 pub.publish_now(body.get("name"))
                 pub.paused = False
+            elif path == "/api/schedule/add":
+                app.schedule_add(body["file"], body["at"], body.get("caption", ""),
+                                 body.get("platforms"))
+            elif path == "/api/schedule/from-queue":
+                app.schedule_from_queue(body["name"], body["at"], body.get("caption", ""))
+            elif path == "/api/schedule/update":
+                app.schedule_update(int(body["id"]), body.get("at"), body.get("caption"),
+                                    body.get("platforms"))
+            elif path == "/api/schedule/delete":
+                app.schedule_delete(int(body["id"]))
+            elif path == "/api/schedule/now":
+                app.schedule_update(int(body["id"]), at=time.time())
             elif path == "/api/job/stop":
                 app.stop_job(int(body["id"]))
             elif path == "/api/jobs/clear":

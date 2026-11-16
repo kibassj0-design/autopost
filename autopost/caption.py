@@ -112,6 +112,20 @@ def _fallback(name, note, cfg, shorts=True):
     }, shorts)
 
 
+def fixed(text, path):
+    """The creator's own caption, used as written on every platform."""
+    meta = video.probe(path)
+    text = text.strip()
+    first = text.splitlines()[0] if text else Path(path).stem
+    title = re.sub(r"#\w+", "", first).strip() or Path(path).stem
+    tags = [t.lstrip("#") for t in re.findall(r"#\w+", text)]
+    return _normalize({
+        "youtube": {"title": title, "description": text, "tags": tags},
+        "instagram": {"caption": text},
+        "tiktok": {"caption": text},
+    }, shorts=meta["height"] > meta["width"])
+
+
 def post_language(cfg, note):
     """Language of the post text. With 'swap' it is the opposite of what is spoken in
     the clip (English speech -> Arabic, Arabic -> English, anything else -> Arabic);
