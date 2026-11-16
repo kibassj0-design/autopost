@@ -96,10 +96,16 @@ def publish(path, text, cfg):
         "media_type": "REELS", "upload_type": "resumable", "caption": text["caption"],
         "share_to_feed": "true", "access_token": token}), "Instagram container").json()
 
-    with open(path, "rb") as f:
-        check(requests.post(container["uri"], data=f, timeout=1800, headers={
-            "Authorization": f"OAuth {token}", "offset": "0",
-            "file_size": str(os.path.getsize(path))}), "Instagram upload")
+    size = os.path.getsize(path)
+    for attempt in range(2):
+        with open(path, "rb") as f:
+            r = requests.post(container["uri"], data=f, timeout=1800, headers={
+                "Authorization": f"OAuth {token}", "offset": "0", "file_size": str(size),
+                "Content-Type": "application/octet-stream"})
+        if r.status_code < 400 or attempt or "retriable\":true" not in r.text.replace(" ", ""):
+            break
+        time.sleep(10)
+    check(r, "Instagram upload")
 
     for _ in range(120):  # Instagram transcodes before it lets us publish
         st = check(requests.get(f"{_base()}/{container['id']}", timeout=30, params={

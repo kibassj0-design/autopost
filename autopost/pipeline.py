@@ -49,17 +49,23 @@ def _vertical_copy(path, cfg):
 
 
 def _instagram_file(path, cfg):
-    """Instagram takes at most 1920 pixels a side: a 2K clip goes up as a 1080p copy."""
+    """A copy Instagram's servers accept: at most 1920 pixels a side, at most 60 fps,
+    a moderate bit rate (graphics-card encoders can go far above Instagram's limit,
+    which fails the upload with "ProcessingFailedError"), H.264 high profile, AAC."""
     meta = video.probe(path)
-    if max(meta["width"], meta["height"]) <= 1920:
+    fine = (max(meta["width"], meta["height"]) <= 1920 and meta["fps"] <= 60.5
+            and 0 < meta["bitrate"] <= 20e6 and meta["size"] <= 250e6
+            and meta["vcodec"] == "h264" and meta["acodec"] == "aac")
+    if fine:
         return path
-    out = config.DATA / "edited" / f"{Path(path).stem}-1080.mp4"
+    out = config.DATA / "edited" / f"{Path(path).stem}-ig.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
     if not out.exists():
-        log.info("Making a 1080p copy of %s for Instagram", Path(path).name)
+        log.info("Making an Instagram-safe copy of %s (%.0f Mbps, %dx%d)", Path(path).name,
+                 meta["bitrate"] / 1e6, meta["width"], meta["height"])
         landscape = meta["width"] > meta["height"]
         video.edit(path, out, meta, 0, None, "original" if landscape else "vertical",
-                   cfg["fps"], resolution="1080")
+                   min(cfg["fps"], 60), resolution="1080", safe=True)
     return out
 
 

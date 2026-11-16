@@ -128,6 +128,8 @@ def probe(path):
         "vcodec": video.get("codec_name"),
         "acodec": audio.get("codec_name") if audio else None,
         "is_mp4": "mp4" in info["format"].get("format_name", ""),
+        "bitrate": float(info["format"].get("bit_rate") or 0),
+        "size": float(info["format"].get("size") or 0),
     }
 
 
@@ -165,8 +167,13 @@ def fit_filter(meta, tw, th):
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2")
 
 
+# Safe for every platform's upload rules (Instagram's limit is 25 Mbps).
+SAFE_X264 = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-maxrate", "12M",
+             "-bufsize", "24M", "-profile:v", "high", "-level", "4.2", "-pix_fmt", "yuv420p"]
+
+
 def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical", fps=60,
-         resolution=None):
+         resolution=None, safe=False):
     """Re-encode to H.264/AAC at 1080x1920, or 1920x1080 when a landscape source
     keeps its orientation. Nothing in frame is cropped away."""
     vf = fit_filter(meta, *target_size(meta, orientation, resolution)) + ",setsar=1[v]"
@@ -180,7 +187,7 @@ def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical", fps=6
     cmd += ["-t", f"{min(duration or left, left):.3f}"]
     cmd += [
         "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
-        "-r", str(out_fps(meta, fps)), *encoder()[1],
+        "-r", str(out_fps(meta, fps)), *(SAFE_X264 if safe else encoder()[1]),
         "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", str(dst),
     ]
