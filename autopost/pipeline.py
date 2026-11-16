@@ -123,7 +123,8 @@ def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
             remote_id, url = ALL[name].publish(str(path), body, cfg)
             store.add_post(db, video_id, name, remote_id, url)
             results[name] = url or "published"
-            log.info("%s: published %s", name, url or "")
+            if not str(url or "").startswith("tiktok:"):
+                log.info("%s: published %s", name, url or "")
         except Exception as e:  # one platform failing must not stop the others
             store.add_post(db, video_id, name, error=str(e))
             results[name] = f"FAILED: {e}"

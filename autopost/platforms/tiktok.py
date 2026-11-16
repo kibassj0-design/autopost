@@ -11,6 +11,8 @@ from .. import config
 API = "https://open.tiktokapis.com/v2"
 AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
 log = logging.getLogger("autopost.tiktok")
+INBOX = "tiktok:inbox"      # sent to the creator's TikTok inbox, not on the profile yet
+PRIVATE = "tiktok:private"  # posted, but only the creator can see it
 CHUNK = 10 * 1024 * 1024  # TikTok allows 5-64 MB per chunk
 
 
@@ -114,8 +116,11 @@ def publish(path, text, cfg):
         st = _call("/post/publish/status/fetch/", {"publish_id": publish_id}, "TikTok status")
         if st["status"] == "PUBLISH_COMPLETE":
             ids = st.get("publicaly_available_post_id") or []
-            # Private posts get no public id, so there are no stats to track for them.
-            return (str(ids[0]) if ids else None), None
+            if not ids or privacy != "PUBLIC_TO_EVERYONE":
+                # Private posts get no public id, so there are no stats to track for them.
+                log.info("TikTok: posted as %s (only you can see it)", privacy)
+                return None, PRIVATE
+            return str(ids[0]), None
         if st["status"] == "FAILED":
             raise PlatformError(f"TikTok rejected the video: {st.get('fail_reason')}")
         time.sleep(5)
@@ -169,7 +174,8 @@ def _upload_draft(path, text, cfg):
         if st["status"] in ("SEND_TO_USER_INBOX", "PUBLISH_COMPLETE"):
             log.info("TikTok: sent to your inbox. Open TikTok and post it. Caption: %s",
                      text["caption"][:300])
-            return None, None
+            # Not on the profile yet: the app shows this instead of "published".
+            return None, INBOX
         if st["status"] == "FAILED":
             raise PlatformError(f"TikTok rejected the video: {st.get('fail_reason')}")
         time.sleep(5)

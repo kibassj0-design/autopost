@@ -793,6 +793,10 @@ function renderSchedule(s) {
                    done: ["ok", "نُشر"], failed: ["bad", "فشل"] }[x.status] || ["", x.status];
       const links = x.status === "done" && x.result ? Object.entries(x.result).filter(([, v]) => String(v).startsWith("http"))
         .map(([k, v]) => el("a", { href: v, target: "_blank", rel: "noopener", class: "badge", text: (PLATFORMS[k] || k) + " ↗" })) : [];
+      if (x.result) for (const [k, v] of Object.entries(x.result)) {
+        if (v === "tiktok:inbox") links.push(el("span", { class: "badge warn", text: "تيك توك: في صندوق الوارد" }));
+        if (v === "tiktok:private") links.push(el("span", { class: "badge warn", text: "تيك توك: خاص" }));
+      }
       const errs = x.result ? Object.entries(x.result).filter(([k, v]) => String(v).startsWith("FAILED") || k === "error")
         .map(([k, v]) => note((PLATFORMS[k] || "") + " " + String(v).replace("FAILED: ", ""), "bad")) : [];
       const pending = x.status === "pending" || x.status === "failed";
@@ -831,6 +835,8 @@ function renderPosts(s) {
     el("td", { class: "num", text: r.likes == null ? "—" : r.likes.toLocaleString("en") }),
     el("td", { class: "num", text: fmtWhen(r.published_at) }),
     el("td", {}, r.error ? el("span", { class: "badge bad", text: "فشل: " + r.error.slice(0, 80), title: r.error })
+      : r.url === "tiktok:inbox" ? el("span", { class: "badge warn", text: "في صندوق تيك توك: انشره من التطبيق", title: "تيك توك ← صندوق الوارد ← إشعارات النظام" })
+      : r.url === "tiktok:private" ? el("span", { class: "badge warn", text: "نُشر خاصا (أنت فقط)" })
       : r.url ? el("a", { href: r.url, target: "_blank", rel: "noopener", class: "badge ok", text: "فتح ↗" })
       : el("span", { class: "badge ok", text: "نُشر" }))])));
 }
