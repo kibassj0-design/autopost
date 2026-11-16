@@ -35,12 +35,13 @@ SETTINGS = {
     "min_minutes_between_posts": int, "fps": int, "resolution": str, "speed_mode": str, "encoder": str, "youtube_mode": str, "tiktok_mode": str,
     "clipper.min_score": int, "clipper.min_seconds": int, "clipper.max_seconds": int,
     "clipper.whisper_model": str, "clipper.whisper_device": str, "clipper.captions": bool,
-    "clipper.captions_language": str, "clipper.layout": str,
+    "clipper.captions_language": str, "clipper.caption_style": str, "clipper.layout": str,
     "momentum.enabled": bool, "momentum.views_per_hour": int,
 }
 
 
-TIMED = ("download", "audio", "transcribe", "pick", "translate", "render", "waiting")
+TIMED = ("download", "audio", "transcribe", "transcribe_clips", "pick", "translate", "render",
+         "waiting")
 SCHEDULED = "scheduled"  # folder under data/ holding videos waiting for their time
 
 

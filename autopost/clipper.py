@@ -273,12 +273,80 @@ def read_wav(wav):
     return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+_MODELS = {}
+
+
+def _model(name, device="cpu", compute_type="int8"):
+    """Speech models stay loaded between links: loading one takes seconds each time."""
+    from faster_whisper import WhisperModel
+
+    key = (name, device, compute_type)
+    if key not in _MODELS:
+        log.info("Loading speech model '%s' (the first time downloads it)", name)
+        _MODELS[key] = WhisperModel(name, device=device, compute_type=compute_type,
+                                    cpu_threads=os.cpu_count() or 4)
+    return _MODELS[key]
+
+
+def transcribe_clip(audio, start, end, model_name, language, device="cpu"):
+    """Careful second pass over one clip with a bigger model and a full beam: these are
+    the words that end up on screen. Times come back on the source's clock."""
+    rate = 16000
+    a, b = max(0, int((start - 0.5) * rate)), int((end + 0.5) * rate)
+    compute = "int8" if device != "gpu" else "float16"
+    model = _model(model_name, "cuda" if device == "gpu" else "cpu", compute)
+    segments, info = model.transcribe(
+        audio[a:b], language=language, beam_size=5, word_timestamps=True, vad_filter=True,
+        condition_on_previous_text=False)
+    offset = a / rate
+    out = []
+    for x in segments:
+        # Whisper invents words over music and game noise; drop what it isn't sure is speech.
+        if x.no_speech_prob > 0.6 and x.avg_logprob < -0.8:
+            continue
+        out.append({"start": x.start + offset, "end": x.end + offset, "text": x.text.strip(),
+                    "words": [{"start": w.start + offset, "end": w.end + offset,
+                               "word": w.word.strip()} for w in (x.words or [])]})
+    return out
+
+
+def subtitle_units(segments, start, end):
+    """Cut speech into subtitle-sized sentences (a pause, a sentence end, about 4 seconds
+    or 9 words), each shown whole at its own time. Translating whole sentences in context
+    reads right; translating 3-word fragments does not."""
+    words = [w for x in segments for w in x["words"]
+             if w["word"] and w["end"] > start and w["start"] < end]
+    units, cur = [], []
+
+    def close():
+        if cur:
+            units.append({"start": cur[0]["start"], "end": cur[-1]["end"],
+                          "text": " ".join(w["word"] for w in cur), "words": [],
+                          "phrase": True})
+            cur.clear()
+
+    for w in words:
+        if cur and (w["start"] - cur[-1]["end"] > 0.5 or w["end"] - cur[0]["start"] > 4.2
+                    or len(cur) >= 9):
+            close()
+        cur.append(w)
+        if len(cur) >= 3 and re.search(r"[.?!؟]$", w["word"]):
+            close()
+    close()
+    if not units:  # no word timings: fall back to whole recognised lines
+        units = [{"start": x["start"], "end": x["end"], "text": x["text"], "words": [],
+                  "phrase": True} for x in segments
+                 if x["end"] > start and x["start"] < end and x["text"]]
+    return units
+
+
+CAPTION_MODELS = {"fast": "small", "balanced": "medium", "accurate": "large-v3"}
+
+
 def _transcribe(wav, model_name, language, tell, device, compute_type):
     from faster_whisper import WhisperModel
 
-    log.info("Transcribing with whisper '%s' (first run downloads the model)", model_name)
-    model = WhisperModel(model_name, device=device, compute_type=compute_type,
-                         cpu_threads=os.cpu_count() or 4)
+    model = _model(model_name, device, compute_type)
     # Hand over the samples ourselves: faster-whisper's own file reader uses PyAV,
     # and newer PyAV releases break it ("unexpected keyword argument 'metadata_errors'").
     audio = read_wav(wav)
@@ -449,17 +517,30 @@ TRANSLATE_SCHEMA = {
     "additionalProperties": False,
 }
 
-TRANSLATE_SYSTEM = """You translate the spoken lines of a video into subtitles that get \
-burned onto short social clips. Viewers read them in a second or two while watching, so \
-keep them short and clear, no longer than the original. Use the standard written form of \
-the target language for every line: Arabic in Modern Standard Arabic (الفصحى), never a \
-dialect, even when the speaker is casual or swears; English in plain standard English. \
-Every line must be entirely in the target language: no words left in the source \
-language and no mixing, except names, game titles and brands, written the way readers of \
-the target language usually write them. Speech-recognition \
-mistakes are common in the input; when a word is clearly a mishearing, translate what was \
-meant. Return exactly one translated line for every numbered input line, with the same \
-number, and never merge or split lines, because each line is shown at its own time."""
+TRANSLATE_SYSTEM = """You are a professional subtitle translator for short gaming and \
+streaming clips. You get the full speech of one clip as numbered subtitle lines, in order, \
+plus what the video is. Translate every line so a native reader understands exactly what \
+the speaker means at that moment.
+
+Rules:
+- Read the whole clip first. Translate the meaning in context, never word by word: slang, \
+gaming talk and idioms become what a native speaker of the target language would say for \
+the same thing ("I got him" = I killed / took him down; "he's one shot" = one hit from \
+dying; "let's go" when cheering = a cheer, not "let us leave"; "no way" = disbelief).
+- Arabic must be correct, natural Modern Standard Arabic (الفصحى): grammatical, idiomatic, \
+no dialect, no literal calques. English must be natural standard English.
+- Every line entirely in the target language. Keep names of people, games, weapons, maps \
+and brands as readers of that language usually write them.
+- Speech recognition makes mistakes: when a word is clearly misheard, translate what was \
+meant from context. If a line is only a sound or filler (uh, um, ha), give a short natural \
+equivalent or an empty string.
+- Subtitle only the streamer (the main person talking to their audience). Lines that \
+are clearly not the streamer, such as in-game character or announcer voices, game menu \
+or kill-feed callouts, music lyrics, ads, text-to-speech donations or another player's \
+voice chat, get an empty string so they are not shown.
+- Each line is shown alone on screen for a couple of seconds: keep it short and clear, \
+never longer than needed. Do not merge, split, reorder or skip lines: exactly one output \
+line per input number."""
 
 
 def caption_target(spoken, setting):
@@ -472,37 +553,34 @@ def caption_target(spoken, setting):
     return setting
 
 
-def translate_segments(segments, target, cfg):
-    """Same segments with text in `target`, and word timings spread across each line."""
-    numbered = "\n".join(f"{i}: {s['text']}" for i, s in enumerate(segments))
+def translate_units(units, target, cfg, context=""):
+    """Translate one clip's subtitle units in one request, with the clip's context.
+    Returns (translated units, who translated). Falls back to the keyless translator."""
+    if not units:
+        return units, None
+    numbered = "\n".join(f"{i}: {u['text']}" for i, u in enumerate(units))
+    brief = (f"Video: {context}\n" if context else "") + \
+        f"Translate into {LANG_NAMES.get(target, target)}:\n\n{numbered}"
+    who = None
     try:
-        data, _ = llm.ask_json(
-            TRANSLATE_SYSTEM, f"Translate into {LANG_NAMES.get(target, target)}:\n\n{numbered}",
-            TRANSLATE_SCHEMA, cfg, max_tokens=64000)
+        data, who = llm.ask_json(TRANSLATE_SYSTEM, brief, TRANSLATE_SCHEMA, cfg,
+                                 effort="high", max_tokens=32000)
         lines = {l["i"]: l["text"].strip() for l in data["lines"]}
-        if len(lines) < len(segments) * 0.9:
-            raise RuntimeError(f"translation returned {len(lines)} of {len(segments)} lines")
+        if len([i for i in range(len(units)) if i in lines]) < len(units) * 0.9:
+            raise RuntimeError(f"translation returned {len(lines)} of {len(units)} lines")
     except (RuntimeError, ValueError, KeyError, TypeError) as e:
-        # No AI available: a plainer keyless translation still flips the language.
         log.warning("AI translation unavailable (%s); using the basic translator",
                     str(e)[:160])
         from . import translate
-        lines = dict(enumerate(translate.lines([s["text"] for s in segments], target)))
-
-    out = []
-    for i, seg in enumerate(segments):
-        words = lines.get(i, "").split()
-        if not words:
-            continue  # a line the model dropped: show nothing rather than the wrong language
-        # The translation has no word timings, so share the line's time by word length.
-        total = sum(len(w) + 1 for w in words)
-        t, span, timed = seg["start"], seg["end"] - seg["start"], []
-        for w in words:
-            dur = span * (len(w) + 1) / total
-            timed.append({"start": t, "end": t + dur, "word": w})
-            t += dur
-        out.append({**seg, "text": " ".join(words), "words": timed})
-    return out
+        try:
+            lines = dict(enumerate(translate.lines([u["text"] for u in units], target)))
+            who = "basic"
+        except Exception as e2:  # nothing reachable: keep the spoken words
+            log.warning("Basic translator unavailable too (%s)", str(e2)[:120])
+            return units, "none"
+    out = [{**u, "text": lines.get(i, "")} for i, u in enumerate(units)]
+    # A line the model dropped shows nothing rather than the wrong language.
+    return [u for u in out if u["text"]], who
 
 
 # ---------------------------------------------------------------- rendering
@@ -545,40 +623,129 @@ def _ass_time(t):
     return f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{t % 60:05.2f}"
 
 
-def write_captions(segments, start, end, path, font, size):
-    """Short word groups, timed to speech. Returns False when nothing is spoken."""
-    words = [w for s in segments for w in s["words"]
-             if w["word"] and w["end"] > start and w["start"] < end]
-    if not words:
-        return False
-    tw, th = size
-    per_line, hold = (3, 2.0) if th > tw else (6, 3.2)  # a wide frame fits a longer line
+def _ass_header(font, fs, margin, tw, th, outline, shadow):
+    return [
+        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {tw}", f"PlayResY: {th}",
+        "WrapStyle: 0", "ScaledBorderAndShadow: yes", "", "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        f"Style: Cap,{font},{fs},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,"
+        f"100,100,0,0,1,{outline},{shadow},2,60,60,{margin},1",
+        "", "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+
+
+RLM = "\u200f"
+
+
+def _clean(text):
+    return text.replace("{", "(").replace("}", ")").replace("\\", "/").replace("\n", " ")
+
+
+def _phrase_words(unit, t1):
+    """A translated sentence has no word timings: share its time by word length."""
+    words = unit["text"].split()
+    total = sum(len(w) + 1 for w in words) or 1
+    t, span, out = unit["start"], max(t1 - unit["start"], 0.3), []
+    for w in words:
+        d = span * (len(w) + 1) / total
+        out.append({"start": t, "end": t + d, "word": w})
+        t += d
+    return out
+
+
+def _chunks(words, size, hold):
+    """Groups of a few words, CapCut style: split at pauses, sentence ends and size,
+    and balanced so a 5-word sentence shows 3 + 2, not 4 + 1."""
     groups, cur = [], []
     for w in words:
-        if cur and (len(cur) == per_line or w["start"] - cur[-1]["end"] > 0.6
+        if cur and (len(cur) == size or w["start"] - cur[-1]["end"] > 0.6
                     or w["end"] - cur[0]["start"] > hold):
             groups.append(cur)
             cur = []
         cur.append(w)
-    groups.append(cur)
-    # Vertical: big text above the platform's own buttons. Landscape: lower third.
-    fs, margin = (84, 430) if th > tw else (66, 70)
-    lines = [
-        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {tw}", f"PlayResY: {th}",
-        "WrapStyle: 0", "", "[V4+ Styles]",
-        "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, "
-        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Cap,{font},{fs},&H00FFFFFF,&H00000000,&H80000000,-1,1,{fs // 14},2,2,"
-        f"80,80,{margin},1",
-        "", "[Events]",
-        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-    ]
-    for i, g in enumerate(groups):
-        t0 = g[0]["start"] - start
-        nxt = groups[i + 1][0]["start"] - start if i + 1 < len(groups) else end - start
-        t1 = min(max(g[-1]["end"] - start + 0.15, t0 + 0.3), nxt)
-        text = " ".join(w["word"] for w in g).replace("{", "(").replace("}", ")")
-        lines.append(f"Dialogue: 0,{_ass_time(t0)},{_ass_time(t1)},Cap,,0,0,0,,{text}")
+        if re.search(r"[.?!؟،,]$", w["word"]) and len(cur) >= 2:
+            groups.append(cur)
+            cur = []
+    if cur:
+        groups.append(cur)
+    out = []
+    for g in groups:  # rebalance a lone trailing word into its neighbour's line
+        if out and len(g) == 1 and len(out[-1]) >= 3 and not re.search(r"[.?!؟]$", out[-1][-1]["word"]):
+            g.insert(0, out[-1].pop())
+        out.append(g)
+    return [g for g in out if g]
+
+
+def write_captions(segments, start, end, path, font, size, style="capcut"):
+    """Burned-in subtitles timed to speech. 'capcut': a few big bold words at a time that
+    pop in, with the word being said highlighted. 'sentence': one whole sentence at a
+    time. Returns False when nothing is spoken."""
+    tw, th = size
+    vertical = th > tw
+    shown = [x for x in segments if x["end"] > start and x["start"] < end]
+    phrases = [x for x in shown if x.get("phrase")]
+
+    if phrases and style == "sentence":
+        fs, margin = (68, 420) if vertical else (56, 60)
+        lines = _ass_header(font, fs, margin, tw, th, max(3, fs // 14), 2)
+        for i, u in enumerate(phrases):
+            t0 = max(0.0, u["start"] - start)
+            nxt = phrases[i + 1]["start"] - start if i + 1 < len(phrases) else end - start
+            t1 = min(max(u["end"] - start + 0.35, t0 + 1.2), nxt, end - start)
+            if t1 > t0:
+                text = _clean(u["text"])
+                if re.search(r"[\u0590-\u08ff]", text):
+                    text = RLM + text + RLM
+                lines.append(f"Dialogue: 0,{_ass_time(t0)},{_ass_time(t1)},Cap,,0,0,0,,{text}")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return True
+
+    if phrases:
+        words = []
+        for i, u in enumerate(phrases):
+            nxt = phrases[i + 1]["start"] if i + 1 < len(phrases) else end
+            words += _phrase_words(u, min(max(u["end"] + 0.3, u["start"] + 1.0), nxt))
+    else:
+        words = [w for x in shown for w in x["words"]
+                 if w["word"] and w["end"] > start and w["start"] < end]
+    if not words:
+        return False
+
+    # Big, bold, thick outline, in the lower middle where CapCut puts it.
+    fs, margin = (96, 560) if vertical else (76, 150)
+    per, hold = (3, 2.4) if vertical else (5, 3.0)
+    lines = _ass_header(font, fs, margin, tw, th, max(5, fs // 12), 3)
+    highlight = "&H0000E5FF&"  # warm yellow (ASS colours are blue-green-red)
+    pop = r"{\fscx72\fscy72\t(0,90,\fscx108\fscy108)\t(90,160,\fscx100\fscy100)}"
+    groups = _chunks(words, per, hold)
+    rtl = any(re.search(r"[\u0590-\u08ff]", w["word"]) for w in words)
+    for gi, g in enumerate(groups):
+        g_end = groups[gi + 1][0]["start"] if gi + 1 < len(groups) else end
+        g_end = min(max(g[-1]["end"] + 0.25, g[0]["start"] + 0.5), g_end, end)
+        for wi, w in enumerate(g):
+            t0 = max(0.0, (g[0]["start"] if wi == 0 else w["start"]) - start)
+            t1 = (g[wi + 1]["start"] if wi + 1 < len(g) else g_end) - start
+            if t1 <= t0:
+                continue
+            if rtl:
+                # Colour tags inside right-to-left text make the subtitle renderer
+                # reorder the words, so Arabic lines stay one unbroken run: the group
+                # pops in whole instead of highlighting word by word.
+                if wi:
+                    continue
+                t1 = g_end - start
+                # Right-to-left marks around the line: without them the renderer takes
+                # the line as left-to-right and puts "!" or "." on the wrong side.
+                text = RLM + " ".join(_clean(x["word"]) for x in g) + RLM
+            else:
+                text = " ".join(
+                    (f"{{\\c{highlight}}}{_clean(x['word'])}{{\\c&H00FFFFFF&}}" if xi == wi
+                     else _clean(x["word"])) for xi, x in enumerate(g))
+            lines.append(f"Dialogue: 0,{_ass_time(t0)},{_ass_time(t1)},Cap,,0,0,0,,"
+                         f"{pop if wi == 0 else ''}{text}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return True
 
@@ -608,7 +775,8 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
             layout = "blurred fill"
     ass = out.with_suffix(".ass")
     if c["captions"] and write_captions(caption_segments, start, end, ass,
-                                       c["caption_font"], (tw, th)):
+                                       c["caption_font"], (tw, th),
+                                       c.get("caption_style", "capcut")):
         chain += f",ass={ass.name}"
     chain += ",setsar=1[v]"
 
@@ -810,7 +978,7 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
                     info["width"], info["height"])
         tell("warning", None, f"low_source: {info['width']}x{info['height']}")
 
-    segments, curve, spoken = [], [], None
+    segments, curve, spoken, wav = [], [], None, None
     if info["acodec"]:
         wav = extract_audio(src, work)
         curve = hype_curve(loudness(wav), chat)
@@ -820,11 +988,12 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
                 segments, spoken = transcribe(wav, whisper_model(cfg), c["language"], tell,
                                               c.get("whisper_device", "cpu"))
             log.info("Spoken language: %s, %d lines", spoken, len(segments))
+        except Cancelled:
+            raise
         except Exception as e:
             log.warning("Transcription failed (%s). Continuing on audio/chat signals only, "
                         "without captions.", str(e)[:200])
             tell("warning", None, f"no_captions: {str(e)[:200]}")
-        wav.unlink(missing_ok=True)
 
     clips = []
     tell("pick")
@@ -855,30 +1024,10 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
     if not info["acodec"]:
         log.warning("The source has no audio track; clips will be silent")
 
-    # From here three things overlap: the subtitles are translated, the clips' video
-    # sections download one after another, and each clip renders as soon as its
-    # section is in (and the translation is done).
+    # From here three things overlap: each clip's words are written down carefully and
+    # translated, the clips' video sections download one after another, and each clip
+    # renders as soon as its section is in.
     import queue as _queue
-
-    caption_segments = [x for x in segments
-                        if any(x["end"] > k["start"] and x["start"] < k["end"] for k in clips)]
-    target = caption_target(spoken, c["captions_language"])
-    translated = {"segments": caption_segments}
-
-    def translate():
-        try:
-            translated["segments"] = translate_segments(caption_segments, target, cfg)
-            log.info("Captions translated %s -> %s", spoken, target)
-        except Exception as e:
-            log.warning("Caption translation unavailable (%s); captions stay in the spoken "
-                        "language", str(e)[:160])
-            tell("warning", None, f"no_translation: {str(e)[:200]}")
-
-    translator = None
-    if c["captions"] and caption_segments and target != spoken:
-        tell("translate")
-        translator = _threading.Thread(target=translate, daemon=True)
-        translator.start()
 
     arrived = _queue.Queue()
 
@@ -892,11 +1041,50 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
 
     if remote:
         log.info("Downloading %d video section(s) instead of the whole video", len(clips))
-        tell("download", None, "sections")
         _threading.Thread(target=download_sections, daemon=True).start()
-    if translator:
-        translator.join()
-    caption_segments = translated["segments"]
+
+    clip_words = [[x for x in segments if x["end"] > k["start"] and x["start"] < k["end"]]
+                  for k in clips]
+    clip_caps = [list(w) for w in clip_words]
+    if c["captions"] and segments and wav is not None:
+        model_name = CAPTION_MODELS.get(cfg.get("speed_mode"), "small")
+        tell("transcribe_clips")
+        try:
+            audio = read_wav(wav)
+            with _heavy(tell, "transcribe_clips"):
+                for i, k in enumerate(clips):
+                    tell("transcribe_clips", i / len(clips))
+                    better = transcribe_clip(audio, k["start"], k["end"], model_name, spoken,
+                                             c.get("whisper_device", "cpu"))
+                    if better:
+                        clip_words[i] = better
+            del audio
+            log.info("Clip speech re-transcribed with '%s'", model_name)
+        except Cancelled:
+            raise
+        except Exception as e:  # the first pass is still there to use
+            log.warning("Careful transcription unavailable (%s); using the first pass",
+                        str(e)[:160])
+        clip_caps = [list(w) for w in clip_words]
+        target = caption_target(spoken, c["captions_language"])
+        if target != spoken:
+            tell("translate")
+            context = meta["title"] + (f" by {meta['channel']}" if meta.get("channel") else "")
+            used = set()
+            for i, k in enumerate(clips):
+                tell("translate", i / len(clips))
+                units = subtitle_units(clip_words[i], k["start"], k["end"])
+                done, who = translate_units(units, target, cfg, context)
+                clip_caps[i] = done
+                used.add(who)
+            log.info("Captions translated %s -> %s by %s", spoken, target,
+                     ", ".join(sorted(x for x in used if x)) or "-")
+            if "none" in used:
+                tell("warning", None, "no_translation: no translation service answered")
+            elif "basic" in used:
+                tell("warning", None, "basic_translation: no AI service answered")
+    if wav is not None:
+        wav.unlink(missing_ok=True)
 
     slug = re.sub(r"[^\w]+", "-", meta["title"], flags=re.UNICODE).strip("-")[:40] or "clip"
     stamp = work.name[-6:] + part.replace(" #", "-p")
@@ -914,11 +1102,11 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
             file, offset = section
             c_src, c_info = file, video.probe(file)
             c_clip = {**clip, "start": clip["start"] - offset, "end": clip["end"] - offset}
-            c_caps = _shift(caption_segments, offset)
+            c_caps = _shift(clip_caps[n - 1], offset)
             if n == 1 and min(c_info["width"], c_info["height"]) < 1000:
                 tell("warning", None, f"low_source: {c_info['width']}x{c_info['height']}")
         else:
-            c_src, c_info, c_clip, c_caps = src, info, clip, caption_segments
+            c_src, c_info, c_clip, c_caps = src, info, clip, clip_caps[n - 1]
         with _heavy(tell, "render"):
             layout = render(c_src, c_info, c_clip, c_caps, out, c, cfg["orientation"],
                             cfg["fps"])
@@ -937,7 +1125,7 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
         log.info("Clip %d/%d: %.0fs-%.0fs (%.0fs, score %d, %s) %s [%s, %.0fs]", n,
                  len(clips), clip["start"], clip["end"], clip["end"] - clip["start"],
                  clip["score"], layout, clip["title"], enc, time.time() - began)
-        note = _note(clip, meta, segments, spoken)
+        note = _note(clip, meta, clip_words[n - 1], spoken)
         if queue:
             inbox.mkdir(exist_ok=True)
             (inbox / out.with_suffix(".txt").name).write_text(note, encoding="utf-8")

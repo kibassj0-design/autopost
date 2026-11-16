@@ -422,6 +422,7 @@
         <div class="field"><label>اتجاه الفيديو</label><select data-set="orientation"><option value="original">نفس اتجاه المصدر</option><option value="vertical">طولي دائما (9:16)</option></select></div>
       </div>
       <div class="row">
+        <div class="field"><label>شكل الكتابة على الفيديو</label><select data-set="clipper.caption_style"><option value="capcut">مثل CapCut: كلمات كبيرة تظهر تباعا</option><option value="sentence">جملة كاملة في كل مرة</option></select></div>
         <div class="field"><label>لغة الكتابة على الفيديو</label><select data-set="clipper.captions_language"><option value="swap">عكس لغة المتحدث (إنكليزي ← عربي)</option><option value="original">نفس لغة المتحدث</option><option value="ar">عربي دائما</option><option value="en">إنكليزي دائما</option></select></div>
         <div class="field"><label>السرعة</label><select data-set="speed_mode"><option value="fast">سريع (الافتراضي)</option><option value="balanced">متوازن: تفريغ كلام أدق وأبطأ</option><option value="accurate">أدق: الأبطأ</option></select></div>
         <div class="field"><label>تفريغ الكلام على</label><select data-set="clipper.whisper_device"><option value="cpu">المعالج (مضمون)</option><option value="gpu">كرت الشاشة NVIDIA (أسرع، يحتاج CUDA)</option></select></div>
@@ -491,12 +492,13 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const STAGES = { queued: "بالانتظار", waiting: "بانتظار دوره (رابط آخر يستخدم المعالج الآن)", live: "يتابع البث المباشر",
   cancelled: "أُلغي", download: "تنزيل", audio: "تجهيز الصوت", title: "يبدأ",
-  transcribe: "تفريغ الكلام", pick: "الذكاء الاصطناعي يختار أفضل اللحظات", translate: "ترجمة الكتابة",
+  transcribe: "تفريغ الكلام", transcribe_clips: "تفريغ دقيق لكلام المقاطع", pick: "الذكاء الاصطناعي يختار أفضل اللحظات", translate: "ترجمة الكتابة",
   render: "تصيير المقاطع", done: "اكتمل" };
-const STEP_NAMES = { download: "تنزيل", audio: "صوت", transcribe: "تفريغ", pick: "اختيار", translate: "ترجمة", render: "تصيير", waiting: "انتظار" };
+const STEP_NAMES = { download: "تنزيل", audio: "صوت", transcribe: "تفريغ", transcribe_clips: "تفريغ دقيق", pick: "اختيار", translate: "ترجمة", render: "تصيير", waiting: "انتظار" };
 const WARNINGS = { no_captions: "المقاطع بدون كتابة: فشل تفريغ الكلام",
   no_ai_pick: "اللحظات اختيرت من الصوت والشات فقط (الذكاء الاصطناعي غير متاح)",
   no_translation: "الكتابة بقيت بلغة المتحدث (الترجمة غير متاحة)",
+  basic_translation: "تُرجمت الكتابة بمترجم آلي بسيط لأن الذكاء الاصطناعي لم يرد، فقد تكون حرفية. تأكد من مفاتيح الذكاء الاصطناعي بزر «فحص الإعداد».",
   low_source: "أعلى جودة متاحة للفيديو الأصلي أقل من 1080p، فالمقاطع بنفس جودته" };
 const AI_NAMES = { claude: "Claude", gemini: "Gemini", mistral: "Mistral", openrouter: "OpenRouter", groq: "Groq", cerebras: "Cerebras" };
 const PLATFORMS = { youtube: "يوتيوب", instagram: "انستغرام", tiktok: "تيك توك" };

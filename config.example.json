@@ -39,7 +39,8 @@
     "caption_font": "Arial",
     "layout": "auto",
     "max_height": 1440,
-    "captions_language": "swap"
+    "captions_language": "swap",
+    "caption_style": "capcut"
   },
   "momentum": {
     "enabled": true,
