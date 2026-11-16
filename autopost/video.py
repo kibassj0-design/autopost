@@ -170,7 +170,9 @@ def fit_filter(meta, tw, th):
 
 # Safe for every platform's upload rules (Instagram's limit is 25 Mbps).
 SAFE_X264 = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-maxrate", "12M",
-             "-bufsize", "24M", "-profile:v", "high", "-level", "4.2", "-pix_fmt", "yuv420p"]
+             "-bufsize", "24M", "-profile:v", "high", "-level", "4.2", "-pix_fmt", "yuv420p",
+             "-g", "60", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "2",
+             "-x264-params", "open-gop=0"]
 
 
 def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical", fps=60,

@@ -93,19 +93,65 @@ def refresh_if_due(log=None):
         log.warning("Instagram token renewal failed: %s", r.text[:160])
 
 
-def _temporary_url(path):
-    """Instagram fetches the video from a public address in the video_url method. The
-    file goes to litterbox.catbox.moe, a free temporary host, and is deleted there
-    after an hour (the post itself is public anyway)."""
-    from . import PlatformError
+def _host_litterbox(path):
     with open(path, "rb") as f:
         r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php",
                           data={"reqtype": "fileupload", "time": "1h"},
-                          files={"fileToUpload": (Path(path).name, f, "video/mp4")},
-                          timeout=1800)
-    if r.status_code >= 400 or not r.text.strip().startswith("https://"):
-        raise PlatformError(f"Temporary video host: HTTP {r.status_code} {r.text[:200]}")
+                          files={"fileToUpload": (Path(path).name, f, "video/mp4")}, timeout=1800)
+    r.raise_for_status()
+    if not r.text.strip().startswith("https://"):
+        raise RuntimeError(r.text[:120])
     return r.text.strip()
+
+
+def _host_uguu(path):
+    with open(path, "rb") as f:
+        r = requests.post("https://uguu.se/upload", files={"files[]": (Path(path).name, f, "video/mp4")},
+                          timeout=1800)
+    r.raise_for_status()
+    return r.json()["files"][0]["url"]
+
+
+def _host_tmpfiles(path):
+    with open(path, "rb") as f:
+        r = requests.post("https://tmpfiles.org/api/v1/upload",
+                          files={"file": (Path(path).name, f, "video/mp4")}, timeout=1800)
+    r.raise_for_status()
+    url = r.json()["data"]["url"]  # the page; the file itself is under /dl/
+    return url.replace("tmpfiles.org/", "tmpfiles.org/dl/", 1).replace("http://", "https://", 1)
+
+
+HOSTS = [("litterbox.catbox.moe", _host_litterbox), ("uguu.se", _host_uguu),
+         ("tmpfiles.org", _host_tmpfiles)]
+
+
+def _temporary_urls(path):
+    """Public addresses Instagram can download the video from, one host after another.
+    All three are free temporary hosts that delete the file within hours (the post
+    itself is public anyway)."""
+    problems = []
+    for name, upload in HOSTS:
+        try:
+            yield name, upload(path)
+        except Exception as e:
+            problems.append(f"{name}: {str(e)[:100]}")
+            log.warning("Temporary host %s failed: %s", name, str(e)[:120])
+    if problems:
+        log.warning("Temporary hosts tried: %s", " | ".join(problems))
+
+
+def _wait(token, container):
+    """Instagram processes the video before it can be published."""
+    from . import PlatformError, check
+    for _ in range(120):
+        st = check(requests.get(f"{_base()}/{container['id']}", timeout=30, params={
+            "fields": "status_code,status", "access_token": token}), "Instagram status").json()
+        if st.get("status_code") == "FINISHED":
+            return
+        if st.get("status_code") in ("ERROR", "EXPIRED"):
+            raise PlatformError(f"Instagram rejected the video: {st.get('status')}")
+        time.sleep(5)
+    raise PlatformError("Instagram was still processing the video after 10 minutes")
 
 
 def _container(token, user, text, **source):
@@ -125,25 +171,26 @@ def publish(path, text, cfg):
         r = requests.post(container["uri"], data=f, timeout=1800, headers={
             "Authorization": f"OAuth {token}", "offset": "0", "file_size": str(size),
             "Content-Type": "application/octet-stream"})
-    if r.status_code >= 400 and "ProcessingFailedError" in r.text:
+    if r.status_code < 400:
+        _wait(token, container)
+    else:
         # Direct upload refused (it is meant for Facebook-login apps; Instagram-login
-        # apps get this error). The other official way: Instagram downloads the video
-        # from a public address.
-        log.warning("Instagram refused the direct upload; sending it by video_url instead")
-        container = _container(token, user, text, video_url=_temporary_url(path))
-    else:
-        check(r, "Instagram upload")
-
-    for _ in range(120):  # Instagram transcodes before it lets us publish
-        st = check(requests.get(f"{_base()}/{container['id']}", timeout=30, params={
-            "fields": "status_code,status", "access_token": token}), "Instagram status").json()
-        if st.get("status_code") == "FINISHED":
-            break
-        if st.get("status_code") in ("ERROR", "EXPIRED"):
-            raise PlatformError(f"Instagram rejected the video: {st.get('status')}")
-        time.sleep(5)
-    else:
-        raise PlatformError("Instagram was still processing the video after 10 minutes")
+        # apps get "ProcessingFailedError"). The other official way: Instagram
+        # downloads the video from a public address. Each temporary host is tried in
+        # turn until Instagram accepts one.
+        log.warning("Instagram refused the direct upload (%s); trying video_url", r.text[:160])
+        last = f"Instagram upload: HTTP {r.status_code} {r.text[:200]}"
+        for host, url in _temporary_urls(path):
+            try:
+                container = _container(token, user, text, video_url=url)
+                _wait(token, container)
+                log.info("Instagram took the video from %s", host)
+                break
+            except PlatformError as e:
+                last = f"via {host}: {e}"
+                log.warning("Instagram could not use the copy on %s: %s", host, e)
+        else:
+            raise PlatformError(last + " (and every video_url attempt failed; see the log)")
 
     media = check(requests.post(f"{_base()}/{user}/media_publish", timeout=60, data={
         "creation_id": container["id"], "access_token": token}), "Instagram publish").json()

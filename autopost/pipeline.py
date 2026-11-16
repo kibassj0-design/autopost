@@ -49,28 +49,15 @@ def _vertical_copy(path, cfg):
 
 
 def _instagram_file(path, cfg):
-    """A copy Instagram's servers accept: at most 1920 pixels a side, at most 60 fps,
-    a moderate bit rate (graphics-card encoders can go far above Instagram's limit,
-    which fails the upload with "ProcessingFailedError"), H.264 high profile, AAC."""
-    meta = video.probe(path)
-    fine = (max(meta["width"], meta["height"]) <= 1920 and meta["fps"] <= 60.5
-            and 0 < meta["bitrate"] <= 20e6 and meta["size"] <= 250e6
-            and meta["vcodec"] == "h264" and meta["acodec"] == "aac")
-    if fine and meta["abitrate"] <= 130e3:
-        return path
-    if fine:  # only the audio is over Instagram's 128 kbps: re-encode it, keep the video
-        out = config.DATA / "edited" / f"{Path(path).stem}-iga.mp4"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        if not out.exists():
-            video._run(["ffmpeg", "-y", "-v", "error", "-i", str(path), "-map", "0:v:0",
-                        "-map", "0:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-                        "-ar", "48000", "-ac", "2", "-movflags", "+faststart", str(out)])
-        return out
+    """Every Reel goes up as a copy made to Instagram's published Reels spec (H.264
+    high profile, closed GOP, 4:2:0, <=1920 px, <=60 fps, <=12 Mbps, AAC 128 kbps 48 kHz,
+    moov at the front). Clips that are slightly off spec fail on Instagram's side with
+    "ProcessingFailedError" and nothing else to go on, so no chances are taken."""
     out = config.DATA / "edited" / f"{Path(path).stem}-ig.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
     if not out.exists():
-        log.info("Making an Instagram-safe copy of %s (%.0f Mbps, %dx%d)", Path(path).name,
-                 meta["bitrate"] / 1e6, meta["width"], meta["height"])
+        meta = video.probe(path)
+        log.info("Making the Instagram copy of %s", Path(path).name)
         landscape = meta["width"] > meta["height"]
         video.edit(path, out, meta, 0, None, "original" if landscape else "vertical",
                    min(cfg["fps"], 60), resolution="1080", safe=True)
