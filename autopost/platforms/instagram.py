@@ -4,13 +4,17 @@ Two kinds of token work:
 - Instagram Login tokens (start with "IG"): graph.instagram.com, refreshable for ever.
 - Facebook Login tokens (start with "EAA"): graph.facebook.com, through a Facebook Page.
 """
+import logging
 import os
 import time
+
+from pathlib import Path
 
 import requests
 
 from .. import config
 
+log = logging.getLogger("autopost.instagram")
 VERSION = "v23.0"
 REFRESH_EVERY = 7 * 24 * 3600
 
@@ -89,23 +93,46 @@ def refresh_if_due(log=None):
         log.warning("Instagram token renewal failed: %s", r.text[:160])
 
 
+def _temporary_url(path):
+    """Instagram fetches the video from a public address in the video_url method. The
+    file goes to litterbox.catbox.moe, a free temporary host, and is deleted there
+    after an hour (the post itself is public anyway)."""
+    from . import PlatformError
+    with open(path, "rb") as f:
+        r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php",
+                          data={"reqtype": "fileupload", "time": "1h"},
+                          files={"fileToUpload": (Path(path).name, f, "video/mp4")},
+                          timeout=1800)
+    if r.status_code >= 400 or not r.text.strip().startswith("https://"):
+        raise PlatformError(f"Temporary video host: HTTP {r.status_code} {r.text[:200]}")
+    return r.text.strip()
+
+
+def _container(token, user, text, **source):
+    from . import check
+    return check(requests.post(f"{_base()}/{user}/media", timeout=60, data={
+        "media_type": "REELS", "caption": text["caption"], "share_to_feed": "true",
+        "access_token": token, **source}), "Instagram container").json()
+
+
 def publish(path, text, cfg):
     from . import PlatformError, check
     token, user = config.env("IG_ACCESS_TOKEN"), config.env("IG_USER_ID")
-    container = check(requests.post(f"{_base()}/{user}/media", timeout=60, data={
-        "media_type": "REELS", "upload_type": "resumable", "caption": text["caption"],
-        "share_to_feed": "true", "access_token": token}), "Instagram container").json()
+    container = _container(token, user, text, upload_type="resumable")
 
     size = os.path.getsize(path)
-    for attempt in range(2):
-        with open(path, "rb") as f:
-            r = requests.post(container["uri"], data=f, timeout=1800, headers={
-                "Authorization": f"OAuth {token}", "offset": "0", "file_size": str(size),
-                "Content-Type": "application/octet-stream"})
-        if r.status_code < 400 or attempt or "retriable\":true" not in r.text.replace(" ", ""):
-            break
-        time.sleep(10)
-    check(r, "Instagram upload")
+    with open(path, "rb") as f:
+        r = requests.post(container["uri"], data=f, timeout=1800, headers={
+            "Authorization": f"OAuth {token}", "offset": "0", "file_size": str(size),
+            "Content-Type": "application/octet-stream"})
+    if r.status_code >= 400 and "ProcessingFailedError" in r.text:
+        # Direct upload refused (it is meant for Facebook-login apps; Instagram-login
+        # apps get this error). The other official way: Instagram downloads the video
+        # from a public address.
+        log.warning("Instagram refused the direct upload; sending it by video_url instead")
+        container = _container(token, user, text, video_url=_temporary_url(path))
+    else:
+        check(r, "Instagram upload")
 
     for _ in range(120):  # Instagram transcodes before it lets us publish
         st = check(requests.get(f"{_base()}/{container['id']}", timeout=30, params={

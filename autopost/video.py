@@ -129,6 +129,7 @@ def probe(path):
         "acodec": audio.get("codec_name") if audio else None,
         "is_mp4": "mp4" in info["format"].get("format_name", ""),
         "bitrate": float(info["format"].get("bit_rate") or 0),
+        "abitrate": float(audio.get("bit_rate") or 0) if audio else 0.0,
         "size": float(info["format"].get("size") or 0),
     }
 
@@ -188,7 +189,7 @@ def edit(src, dst, meta, start=0.0, duration=None, orientation="vertical", fps=6
     cmd += [
         "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
         "-r", str(out_fps(meta, fps)), *(SAFE_X264 if safe else encoder()[1]),
-        "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", str(dst),
     ]
     _run(cmd)

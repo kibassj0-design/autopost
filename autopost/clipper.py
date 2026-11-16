@@ -788,7 +788,7 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
         graph = chain + ";[1:a]anull[a]"
     cmd += ["-t", f"{end - start:.3f}", "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
             "-r", str(video.out_fps(meta, fps)), *video.encoder()[1],
-            "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
             "-movflags", "+faststart", out.name]
     # Run inside the output folder so the subtitle filter needs no path escaping.
     code, err = _ffmpeg(cmd, out.parent)

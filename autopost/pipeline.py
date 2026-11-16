@@ -56,8 +56,16 @@ def _instagram_file(path, cfg):
     fine = (max(meta["width"], meta["height"]) <= 1920 and meta["fps"] <= 60.5
             and 0 < meta["bitrate"] <= 20e6 and meta["size"] <= 250e6
             and meta["vcodec"] == "h264" and meta["acodec"] == "aac")
-    if fine:
+    if fine and meta["abitrate"] <= 130e3:
         return path
+    if fine:  # only the audio is over Instagram's 128 kbps: re-encode it, keep the video
+        out = config.DATA / "edited" / f"{Path(path).stem}-iga.mp4"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if not out.exists():
+            video._run(["ffmpeg", "-y", "-v", "error", "-i", str(path), "-map", "0:v:0",
+                        "-map", "0:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+                        "-ar", "48000", "-ac", "2", "-movflags", "+faststart", str(out)])
+        return out
     out = config.DATA / "edited" / f"{Path(path).stem}-ig.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
     if not out.exists():
