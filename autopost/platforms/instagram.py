@@ -245,6 +245,14 @@ def publish(path, text, cfg):
         r = requests.post(container["uri"], data=f, timeout=1800, headers={
             "Authorization": f"OAuth {token}", "offset": "0", "file_size": str(size),
             "Content-Type": "application/octet-stream"})
+    if r.status_code >= 400 and "ProcessingFailedError" in r.text:
+        # Second try exactly as Meta's own example sends it (curl --data-binary: the
+        # whole file in one body, no explicit content type), on a fresh container.
+        log.info("Instagram refused the upload; retrying it the way Meta's example does")
+        container = _container(token, user, text, upload_type="resumable")
+        r = requests.post(container["uri"], data=Path(path).read_bytes(), timeout=1800,
+                          headers={"Authorization": f"OAuth {token}", "offset": "0",
+                                   "file_size": str(size)})
     if r.status_code < 400:
         _wait(token, container)
     else:

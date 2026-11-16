@@ -475,6 +475,7 @@
       <div class="toggle"><input type="checkbox" id="autoupd" data-set="auto_update"><label for="autoupd">حدّث الأداة تلقائيا عند صدور نسخة جديدة (في وقت لا يوجد فيه شغل جارٍ)</label></div>
       <div class="row" style="align-items:center;margin-top:8px">
         <button class="btn" id="upd-check">تحقق من التحديثات</button>
+        <button class="btn primary" id="upd-now2" hidden>تحديث الآن</button>
         <span class="muted small" id="upd-status"></span>
       </div>
     </div>
@@ -1094,6 +1095,7 @@ $$("[data-disconnect]").forEach(b => b.addEventListener("click", async () => {
 function renderUpdate(u) {
   $("#version").textContent = "الإصدار: " + (u.current ? u.current.slice(0, 7) : "غير معروف");
   $("#upd-now").hidden = !u.available || u.busy;
+  $("#upd-now2").hidden = !u.available || u.busy;
   let st = u.busy ? "يحدّث الآن، ستُعاد الأداة بعد لحظات…"
     : u.error ? "تعذّر التحقق: " + u.error
     : u.available ? "يوجد إصدار جديد."
@@ -1111,6 +1113,7 @@ async function doUpdate() {
   } catch (e) { toast(e.message, "bad"); }
 }
 $("#upd-now").addEventListener("click", doUpdate);
+$("#upd-now2").addEventListener("click", doUpdate);
 $("#upd-check").addEventListener("click", async () => {
   $("#upd-status").textContent = "يتحقق…";
   try { renderUpdate(await api("/api/update/check", {})); } catch (e) { $("#upd-status").textContent = e.message; }
