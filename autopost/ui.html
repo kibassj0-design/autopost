@@ -576,7 +576,7 @@ function store(k, v) { try { if (v === undefined) return localStorage.getItem(k)
 // Keyed list: unchanged items stay as they are (no flicker), new ones animate in,
 // removed ones fade out.
 function keyed(box, items, key, sig, build, emptyNode) {
-  const old = new Map([...box.children].filter(n => n.dataset.key).map(n => [n.dataset.key, n]));
+  const old = new Map([...box.children].filter(n => n.dataset.k).map(n => [n.dataset.k, n]));
   if (!items.length) {
     if (!box.querySelector(":scope > .empty")) box.replaceChildren(emptyNode());
     return;
@@ -587,18 +587,18 @@ function keyed(box, items, key, sig, build, emptyNode) {
     const k = String(key(it)), sg = sig(it);
     let n = old.get(k);
     if (!n) {
-      n = build(it); n.dataset.key = k; n.dataset.sig = sg;
+      n = build(it); n.dataset.k = k; n.dataset.sig = sg;
       if (box.dataset.ready) n.classList.add("enter");
     } else {
       old.delete(k);
-      if (n.dataset.sig !== sg) { const m = build(it); m.dataset.key = k; m.dataset.sig = sg; n.replaceWith(m); n = m; }
+      if (n.dataset.sig !== sg) { const m = build(it); m.dataset.k = k; m.dataset.sig = sg; n.replaceWith(m); n = m; }
     }
     const next = prev ? prev.nextSibling : box.firstChild;
     if (n !== next) box.insertBefore(n, next);
     prev = n;
     if (n._update) n._update(it);
   }
-  for (const n of old.values()) { n.classList.add("leave"); n.removeAttribute("data-key"); setTimeout(() => n.remove(), 260); }
+  for (const n of old.values()) { n.classList.add("leave"); n.removeAttribute("data-k"); setTimeout(() => n.remove(), 260); }
   box.dataset.ready = "1";
 }
 
