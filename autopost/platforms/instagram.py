@@ -69,9 +69,39 @@ FB_SCOPES = ("instagram_basic,instagram_content_publish,pages_show_list,"
 FB_REDIRECT = "http://localhost:8765/fb"
 
 
+def fb_check_app():
+    """Check the App ID and App secret with Facebook before sending the user to sign in,
+    so a wrong secret is reported here instead of after the whole sign-in."""
+    from . import PlatformError
+    app_id = config.env("FB_APP_ID").strip()
+    secret = config.env("FB_APP_SECRET").strip()
+    if not app_id.isdigit():
+        raise PlatformError(f"App ID يجب أن يكون أرقاما فقط (المكتوب: {len(app_id)} خانة).")
+    try:
+        r = requests.get(f"https://graph.facebook.com/{VERSION}/oauth/access_token", timeout=20,
+                         params={"client_id": app_id, "client_secret": secret,
+                                 "grant_type": "client_credentials"})
+    except requests.RequestException:
+        return  # offline check failed; let the sign-in report any problem
+    if r.status_code < 400:
+        return
+    try:
+        message = r.json().get("error", {}).get("message", "")
+    except ValueError:
+        message = r.text[:200]
+    if "secret" in message.lower():
+        raise PlatformError(
+            f"App secret غير صحيح: المحفوظ طوله {len(secret)} حرفا، ومفتاح فيسبوك الصحيح طوله "
+            "32 حرفا (أرقام وحروف a-f). في developers.facebook.com: إعدادات التطبيق ← أساسي ← "
+            "المفتاح السري للتطبيق ← إظهار، ثم انقر داخل الخانة واضغط Ctrl+A ثم Ctrl+C. "
+            "أو اضغط «إعادة تعيين» وانسخ المفتاح الجديد.")
+    raise PlatformError("Facebook: " + message)
+
+
 def fb_auth_url(state):
     """Facebook Login: the connection Instagram's direct video upload is made for."""
     import urllib.parse
+    fb_check_app()
     params = {"client_id": config.env("FB_APP_ID"), "redirect_uri": FB_REDIRECT,
               "state": state, "response_type": "code"}
     config_id = config.env("FB_CONFIG_ID", required=False)

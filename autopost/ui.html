@@ -1063,7 +1063,9 @@ $$("[data-auth]").forEach(b => b.addEventListener("click", async () => {
     window.open(url, "_blank", "noopener");
     if (platform === "tiktok") { $("#tt-finish").hidden = false; accountMsg(platform, ""); $("#tt-pasted").focus(); }
     else accountMsg(platform, "وافق في الصفحة التي فُتحت. بعدها يتغير الوضع هنا إلى «مربوط» تلقائيا.", "ok");
-  } catch (e) { accountMsg(platform, "أدخل مفاتيح هذه المنصة أولا. (" + e.message + ")", "bad"); }
+  } catch (e) {
+    accountMsg(platform, e.message.includes("is not set") ? "أدخل مفاتيح هذه المنصة أولا. (" + e.message + ")" : e.message, "bad");
+  }
 }));
 $("#tt-done").addEventListener("click", async () => {
   try {
