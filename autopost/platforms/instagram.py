@@ -64,6 +64,61 @@ def identify(token, user_id=None):
     return str(me.get("user_id") or me["id"]), me.get("username", ""), "graph.instagram.com"
 
 
+FB_SCOPES = ("instagram_basic,instagram_content_publish,pages_show_list,"
+             "pages_read_engagement,business_management")
+FB_REDIRECT = "http://localhost:8765/fb"
+
+
+def fb_auth_url(state):
+    """Facebook Login: the connection Instagram's direct video upload is made for."""
+    import urllib.parse
+    params = {"client_id": config.env("FB_APP_ID"), "redirect_uri": FB_REDIRECT,
+              "state": state, "response_type": "code"}
+    config_id = config.env("FB_CONFIG_ID", required=False)
+    if config_id:  # Facebook Login for Business configuration, when the app has one
+        params["config_id"] = config_id
+    else:
+        params["scope"] = FB_SCOPES
+    return f"https://www.facebook.com/{VERSION}/dialog/oauth?" + urllib.parse.urlencode(params)
+
+
+def fb_exchange(code):
+    """Code -> long-lived user token -> the Page token of the Page linked to the
+    Instagram account (a Page token made from a long-lived token does not expire)."""
+    from . import PlatformError
+    base = f"https://graph.facebook.com/{VERSION}"
+    app_id, secret = config.env("FB_APP_ID"), config.env("FB_APP_SECRET")
+
+    def get(path, **params):
+        r = requests.get(f"{base}/{path}", params=params, timeout=30)
+        try:
+            body = r.json()
+        except ValueError:
+            body = {}
+        if r.status_code >= 400:
+            raise PlatformError("Facebook: " + body.get("error", {}).get("message", r.text[:200]))
+        return body
+
+    short = get("oauth/access_token", client_id=app_id, client_secret=secret,
+                redirect_uri=FB_REDIRECT, code=code)["access_token"]
+    long_lived = get("oauth/access_token", grant_type="fb_exchange_token", client_id=app_id,
+                     client_secret=secret, fb_exchange_token=short)["access_token"]
+    pages = get("me/accounts", access_token=long_lived,
+                fields="name,access_token,instagram_business_account{id,username}")
+    for page in pages.get("data", []):
+        ig = page.get("instagram_business_account")
+        if ig:
+            config.write_env({"IG_ACCESS_TOKEN": page["access_token"], "IG_USER_ID": ig["id"],
+                              "IG_GRAPH_HOST": "graph.facebook.com"})
+            config.save_tokens("instagram", {"username": ig.get("username", ""),
+                                             "via": "facebook", "page": page.get("name", ""),
+                                             "refreshed_at": time.time()})
+            return ig.get("username", "")
+    raise PlatformError("None of your Facebook Pages is linked to an Instagram professional "
+                        "account. Link them first: Facebook Page settings -> Linked accounts "
+                        "-> Instagram.")
+
+
 def connect(token, user_id=None):
     user_id, username, host = identify(token, user_id)
     config.write_env({"IG_ACCESS_TOKEN": token.strip(), "IG_USER_ID": user_id,

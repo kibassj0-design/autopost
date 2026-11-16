@@ -365,6 +365,21 @@
         <button class="btn primary" id="ig-connect">ربط انستغرام</button>
       </div>
       <div class="msg" data-msg="instagram"></div>
+      <h3>الطريقة الأضمن للنشر: الربط عبر فيسبوك</h3>
+      <p class="muted small" style="margin-top:0">رفع الفيديو المباشر لانستغرام مصمَّم لهذه الطريقة. إذا فشل النشر بالتوكن أعلاه («ProcessingFailedError»)، استخدمها:</p>
+      <ol class="steps">
+        <li>اربط حساب انستغرام بصفحة فيسبوك: إعدادات الصفحة ← <b>الحسابات المرتبطة ← Instagram</b>.</li>
+        <li>في <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener">developers.facebook.com/apps</a> ← تطبيقك ← <b>إعدادات التطبيق ← أساسي</b> (App settings ← Basic): انسخ <b>App ID</b> و <b>App secret</b>.</li>
+        <li>إذا كان لتطبيقك «تكوين» تسجيل دخول فيسبوك للأعمال (رقم يظهر بجانب «معرف التكوين»)، ضعه في الخانة الثالثة، وإلا اتركها فارغة.</li>
+        <li>اضغط «ربط عبر فيسبوك» ووافق على كل الصلاحيات واختر صفحتك وحساب انستغرام.</li>
+      </ol>
+      <div class="row">
+        <div class="field"><label>App ID</label><input data-key="FB_APP_ID" dir="ltr" autocomplete="off"></div>
+        <div class="field"><label>App secret</label><input data-key="FB_APP_SECRET" dir="ltr" type="password" autocomplete="off"></div>
+        <div class="field small"><label>معرف التكوين (اختياري)</label><input data-key="FB_CONFIG_ID" dir="ltr" autocomplete="off"></div>
+        <div class="field small"><label>&nbsp;</label><button class="btn primary" data-auth="facebook">ربط عبر فيسبوك</button></div>
+      </div>
+      <div class="msg" data-msg="facebook"></div>
     </div>
 
     <div class="card">

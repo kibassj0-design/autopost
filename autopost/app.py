@@ -23,10 +23,10 @@ from .publisher import Publisher
 log = logging.getLogger("autopost")
 
 PORT = 8765  # also the YouTube sign-in redirect, so the app can finish that login itself
-SECRET_KEYS = ["GEMINI_API_KEY", "MISTRAL_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY",
+SECRET_KEYS = ["FB_APP_SECRET", "GEMINI_API_KEY", "MISTRAL_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY",
                "CEREBRAS_API_KEY", "ANTHROPIC_API_KEY", "YT_CLIENT_SECRET", "IG_ACCESS_TOKEN",
                "TT_CLIENT_SECRET"]
-PLAIN_KEYS = ["YT_CLIENT_ID", "IG_USER_ID", "IG_GRAPH_HOST", "TT_CLIENT_KEY",
+PLAIN_KEYS = ["FB_APP_ID", "FB_CONFIG_ID", "YT_CLIENT_ID", "IG_USER_ID", "IG_GRAPH_HOST", "TT_CLIENT_KEY",
               "TT_REDIRECT_URI"]
 # Settings the page may change: name -> type (nested ones as "section.name").
 SETTINGS = {
@@ -392,6 +392,9 @@ class App:
     # ---- account sign-in
 
     def auth_start(self, platform):
+        if platform == "facebook":
+            from .platforms import instagram
+            return instagram.fb_auth_url(self.oauth_state)
         if platform == "youtube":
             return youtube.auth_url(self.oauth_state)
         return tiktok.auth_url()
@@ -461,6 +464,8 @@ def make_handler(app):
             query = urllib.parse.parse_qs(url.query)
             if not self._local():
                 return self._send(403, {"error": "forbidden"})
+            if url.path == "/fb":  # Facebook sending the user back after sign-in
+                return self._facebook_return(query)
             if url.path == "/":
                 if "code" in query:  # Google sending the user back after YouTube sign-in
                     return self._youtube_return(query)
@@ -475,6 +480,26 @@ def make_handler(app):
             if url.path == "/media":
                 return self._media(query.get("name", [""])[0], query.get("in", ["inbox"])[0])
             self._send(404, {"error": "not found"})
+
+        def _facebook_return(self, query):
+            from .platforms import instagram
+            ok = secrets.compare_digest(query.get("state", [""])[0], app.oauth_state)
+            if not ok:
+                message = "تعذّر الربط: الطلب لم يبدأ من هذه الأداة."
+            elif "code" not in query:
+                message = "لم تتم الموافقة: " + query.get("error_description", [""])[0]
+            else:
+                try:
+                    name = instagram.fb_exchange(query["code"][0])
+                    if "instagram" not in app.cfg["platforms"]:
+                        config.save_config(app.cfg, {"platforms": app.cfg["platforms"] + ["instagram"]})
+                    message = f"تم ربط انستغرام عبر فيسبوك: @{name}. يمكنك إغلاق هذه الصفحة."
+                except Exception as e:
+                    message = f"تعذّر الربط: {e}"
+            html = (f'<!doctype html><meta charset="utf-8"><body dir="rtl" style="font-family:'
+                    f'Segoe UI,Tahoma,sans-serif;background:#0f1216;color:#e8eaed;padding:48px">'
+                    f"<h2>{message}</h2><p><a style='color:#6ea8ff' href='/'>فتح الأداة</a></p>")
+            self._send(200, html, "text/html; charset=utf-8")
 
         def _youtube_return(self, query):
             ok = secrets.compare_digest(query.get("state", [""])[0], app.oauth_state)
