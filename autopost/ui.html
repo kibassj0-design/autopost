@@ -751,6 +751,7 @@ function renderQueue(s) {
   $("#pause").textContent = p.paused ? "تشغيل النشر" : "إيقاف مؤقت";
   let status;
   if (!p.has_account) status = "النشر متوقف: لا يوجد حساب مربوط.";
+  else if (p.paused && p.pause_reason === "failing") status = "أوقفت الأداة النشر: آخر 3 مقاطع فشلت على كل المنصات، فأُعيدت للطابور. أصلح الحسابات (الإعدادات ← فحص الإعداد) ثم اضغط «تشغيل النشر».";
   else if (p.paused) status = "النشر متوقف مؤقتا.";
   else if (p.current) status = "يُنشر الآن…";
   else if (!s.queue.length) status = "";

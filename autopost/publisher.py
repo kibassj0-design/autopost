@@ -21,6 +21,8 @@ class Publisher:
         for d in (self.inbox, self.done, self.failed):
             d.mkdir(exist_ok=True)
         self.paused = False
+        self.pause_reason = ""
+        self.failures = 0
         self.release = False      # publish the next one now, ignoring the gap
         self.first = None         # file name to publish ahead of the others
         self.current = None       # file name being published right now
@@ -79,13 +81,24 @@ class Publisher:
         except Exception as e:
             log.error("%s: %s", path.name, e)
             target = self.failed
+        self.last_post = time.time()  # the gap applies after a failure too
         if target is self.failed:
-            shutil.move(kept, self.failed / kept.name)
+            # Every platform refused it, which is almost always an account problem, not
+            # the clip. Put it back in the queue rather than burn through every clip,
+            # and pause after a few in a row until the accounts are fixed.
+            shutil.move(kept, path)
             if kept.with_suffix(".alt.mp4").exists():
-                shutil.move(kept.with_suffix(".alt.mp4"), self.failed / kept.with_suffix(".alt.mp4").name)
+                shutil.move(kept.with_suffix(".alt.mp4"), alt)
+            self.failures += 1
+            if self.failures >= 3:
+                self.paused = True
+                self.pause_reason = "failing"
+                log.error("Publishing paused: the last %d clips failed on every platform. "
+                          "Check the accounts (Settings -> check), then resume.", self.failures)
+            target = self.inbox
         else:
-            self.last_post = time.time()
-        if note_file.exists():
+            self.failures = 0
+        if note_file.exists() and target is not self.inbox:
             shutil.move(note_file, target / note_file.name)
         self._sizes.pop(path, None)
         self.current = None

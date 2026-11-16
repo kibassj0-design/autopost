@@ -304,7 +304,7 @@ class App:
             "queue": clips,
             "posts": posts,
             "publisher": {
-                "paused": pub.paused, "current": pub.current,
+                "paused": pub.paused, "pause_reason": pub.pause_reason, "current": pub.current,
                 "next_post_at": pub.next_post_at(), "now": time.time(),
                 "has_account": any(connected[p] for p in self.cfg["platforms"]),
             },
@@ -580,6 +580,8 @@ def make_handler(app):
                 return app.settings()
             elif path == "/api/publisher":
                 pub.paused = bool(body.get("paused"))
+                if not pub.paused:
+                    pub.failures, pub.pause_reason = 0, ""
             elif path == "/api/queue/publish":
                 pub.publish_now(body.get("name"))
                 pub.paused = False
