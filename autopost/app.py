@@ -226,7 +226,7 @@ class App:
     def schedule_update(self, item_id, at=None, caption=None, platforms=None):
         db = store.connect()
         row = db.execute("SELECT * FROM schedule WHERE id=?", (item_id,)).fetchone()
-        if row is None or row["status"] not in ("pending", "failed"):
+        if row is None or row["status"] not in ("pending", "failed", "cancelled"):
             db.close()
             raise ValueError("لا يمكن تعديل هذا المنشور الآن.")
         db.execute("UPDATE schedule SET at=?, caption=?, platforms=?, status='pending' WHERE id=?",
@@ -592,6 +592,10 @@ def make_handler(app):
                     raise ValueError("انتظر حتى ينتهي الشغل الجاري أو ألغه، ثم حدّث.")
                 app.apply_update()
                 return {"restarting": True}
+            elif path == "/api/publisher/cancel":
+                if not pub.current:
+                    raise ValueError("لا يوجد نشر جارٍ الآن.")
+                pub.cancel_flag.set()
             elif path == "/api/schedule/add":
                 app.schedule_add(body["file"], body["at"], body.get("caption", ""),
                                  body.get("platforms"))

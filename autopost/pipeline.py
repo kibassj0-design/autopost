@@ -87,14 +87,21 @@ def _youtube_text(path, text):
     return {**text, "description": description}
 
 
+class PublishCancelled(RuntimeError):
+    pass
+
+
 def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
-            parent_id=None, boost_of=None, start=0.0, duration=None, own_caption=None):
+            parent_id=None, boost_of=None, start=0.0, duration=None, own_caption=None,
+            stop=None):
     """Returns (video_id, {platform: url-or-error}, text)."""
     if not platforms:  # by default, only the enabled accounts that are actually connected
         platforms = [p for p in cfg["platforms"] if config.connected(p) or dry_run]
         if not platforms:
             raise RuntimeError("No social account is connected; nothing to publish to")
     ready = prepare(src, cfg, start, duration, force=parent_id is not None)
+    if stop and stop():
+        raise PublishCancelled("cancelled")
     if own_caption and own_caption.strip():
         text, origin = caption.fixed(own_caption, ready), "you"
     else:
@@ -119,6 +126,11 @@ def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
             uploads.append((name, ready, text[name]))
 
     for name, path, body in uploads:
+        # Cancelling stops before the next platform; an upload already under way
+        # finishes first (the platforms offer no way to abort one half-way).
+        if stop and stop():
+            log.info("Publishing cancelled before %s", name)
+            raise PublishCancelled("cancelled")
         try:
             remote_id, url = ALL[name].publish(str(path), body, cfg)
             store.add_post(db, video_id, name, remote_id, url)

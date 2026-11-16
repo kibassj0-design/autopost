@@ -23,6 +23,7 @@ class Publisher:
         self.paused = False
         self.pause_reason = ""
         self.failures = 0
+        self.cancel_flag = threading.Event()
         self.release = False      # publish the next one now, ignoring the gap
         self.first = None         # file name to publish ahead of the others
         self.current = None       # file name being published right now
@@ -75,9 +76,22 @@ class Publisher:
             shutil.move(alt, kept.with_suffix(".alt.mp4"))
         target = self.done
         try:
-            _, results, _ = pipeline.publish(kept, self.cfg, note=note, db=self._db)
+            self.cancel_flag.clear()
+            _, results, _ = pipeline.publish(kept, self.cfg, note=note, db=self._db,
+                                             stop=self.cancel_flag.is_set)
             if all(str(r).startswith("FAILED") for r in results.values()):
                 target = self.failed
+        except pipeline.PublishCancelled:
+            # Back to the queue as it was, and no new post right after it.
+            shutil.move(kept, path)
+            if kept.with_suffix(".alt.mp4").exists():
+                shutil.move(kept.with_suffix(".alt.mp4"), alt)
+            self.paused = True
+            self.last_post = time.time()
+            self._sizes.pop(path, None)
+            self.current = None
+            log.info("Publishing of %s cancelled; it is back in the queue (paused)", path.name)
+            return
         except Exception as e:
             log.error("%s: %s", path.name, e)
             target = self.failed
@@ -114,11 +128,15 @@ class Publisher:
                 raise RuntimeError("the video file is gone")
             platforms = [p for p in json.loads(row["platforms"] or "[]")
                          if config.connected(p)] or None
+            self.cancel_flag.clear()
             _, result, _ = pipeline.publish(path, self.cfg, note=row["note"] or "",
                                             platforms=platforms, db=self._db,
-                                            own_caption=row["caption"])
+                                            own_caption=row["caption"],
+                                            stop=self.cancel_flag.is_set)
             if all(str(r).startswith("FAILED") for r in result.values()):
                 status = "failed"
+        except pipeline.PublishCancelled:
+            status, result = "cancelled", {}
         except Exception as e:
             log.error("Scheduled post %s: %s", path.name, e)
             status, result = "failed", {"error": str(e)[:300]}
@@ -130,6 +148,12 @@ class Publisher:
     def step(self):
         if self._db is None:  # SQLite connections belong to the thread that made them
             self._db = store.connect()
+            # A post cut off by closing the app stays "publishing" for ever: mark it so
+            # it can be retried (not re-sent blindly, it may have reached some platforms).
+            self._db.execute("UPDATE schedule SET status='failed', result=? WHERE status="
+                             "'publishing'", (json.dumps({"error": "interrupted: the app was "
+                                                          "closed while publishing"}),))
+            self._db.commit()
             row = self._db.execute(
                 "SELECT MAX(p.published_at) t FROM posts p JOIN videos v ON v.id = p.video_id"
                 " WHERE p.error IS NULL AND v.parent_id IS NULL").fetchone()

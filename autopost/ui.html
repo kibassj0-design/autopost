@@ -286,6 +286,7 @@
         <h2>طابور النشر</h2>
         <button class="btn sm ghost" id="folder">فتح المجلد</button>
         <button class="btn sm" id="pause"></button>
+        <button class="btn sm danger" id="cancel-pub" hidden>إلغاء النشر الجاري</button>
         <button class="btn sm danger" id="clear-queue">حذف الكل</button>
       </div>
       <div class="muted small" id="pubstatus" style="margin:-6px 0 12px"></div>
@@ -672,6 +673,7 @@ function render() {
 
   $("#encoder").textContent = "الترميز: " + (s.encoder === "libx264" ? "المعالج" : "كرت الشاشة (" + s.encoder.replace("h264_", "") + ")");
   $("#clear-queue").hidden = !s.queue.length;
+  $("#cancel-pub").hidden = !s.publisher.current;
   $("#clear-jobs").hidden = !s.jobs.some(j => !["queued", "running"].includes(j.status));
 
   const log = $("#log");
@@ -753,7 +755,7 @@ function renderQueue(s) {
   if (!p.has_account) status = "النشر متوقف: لا يوجد حساب مربوط.";
   else if (p.paused && p.pause_reason === "failing") status = "أوقفت الأداة النشر: آخر 3 مقاطع فشلت على كل المنصات، فأُعيدت للطابور. أصلح الحسابات (الإعدادات ← فحص الإعداد) ثم اضغط «تشغيل النشر».";
   else if (p.paused) status = "النشر متوقف مؤقتا.";
-  else if (p.current) status = "يُنشر الآن…";
+  else if (p.current) status = "يُنشر الآن: " + p.current;
   else if (!s.queue.length) status = "";
   else {
     const wait = Math.max(0, p.next_post_at - p.now);
@@ -790,7 +792,7 @@ function renderSchedule(s) {
       if (r.kind === "day") return el("div", { class: "day", text: r.label });
       const x = r.x;
       const st = { pending: ["info", "مجدول " + fromNow(x.at, now)], publishing: ["warn", "يُنشر الآن…"],
-                   done: ["ok", "نُشر"], failed: ["bad", "فشل"] }[x.status] || ["", x.status];
+                   done: ["ok", "نُشر"], failed: ["bad", "فشل"], cancelled: ["", "أُلغي النشر"] }[x.status] || ["", x.status];
       const links = x.status === "done" && x.result ? Object.entries(x.result).filter(([, v]) => String(v).startsWith("http"))
         .map(([k, v]) => el("a", { href: v, target: "_blank", rel: "noopener", class: "badge", text: (PLATFORMS[k] || k) + " ↗" })) : [];
       if (x.result) for (const [k, v] of Object.entries(x.result)) {
@@ -799,7 +801,7 @@ function renderSchedule(s) {
       }
       const errs = x.result ? Object.entries(x.result).filter(([k, v]) => String(v).startsWith("FAILED") || k === "error")
         .map(([k, v]) => note((PLATFORMS[k] || "") + " " + String(v).replace("FAILED: ", ""), "bad")) : [];
-      const pending = x.status === "pending" || x.status === "failed";
+      const pending = ["pending", "failed", "cancelled"].includes(x.status);
       return el("div", { class: "item" }, [
         el("div", { class: "top" }, [
           el("div", { class: "title" }, [
@@ -813,7 +815,8 @@ function renderSchedule(s) {
           el("div", { class: "actions" }, [
             x.exists ? el("button", { class: "btn sm", onclick: () => play(x.name, "scheduled") }, [icon("i-play"), "معاينة"]) : null,
             pending ? el("button", { class: "btn sm", text: "تعديل", onclick: () => openDialog({ mode: "edit", id: x.id, at: x.at, caption: x.caption, platforms: x.platforms, title: x.title }) }) : null,
-            pending ? el("button", { class: "btn sm", text: x.status === "failed" ? "أعد المحاولة" : "انشر الآن",
+            x.status === "publishing" ? el("button", { class: "btn sm danger", text: "إلغاء النشر", onclick: cancelPublish }) : null,
+            pending ? el("button", { class: "btn sm", text: x.status === "pending" ? "انشر الآن" : "أعد المحاولة",
               onclick: () => act("/api/schedule/now", { id: x.id }) }) : null,
             x.status !== "publishing" ? el("button", { class: "btn sm danger", text: "حذف", onclick: () => {
               if (confirm(x.status === "done" ? "إزالة من القائمة؟" : "حذف هذا المنشور المجدول وملفه؟")) act("/api/schedule/delete", { id: x.id }); } }) : null])]),
@@ -875,6 +878,11 @@ $("#clear-queue").addEventListener("click", () => {
   if (state && state.queue.length && confirm("حذف كل المقاطع (" + state.queue.length + ") من الطابور نهائيا؟"))
     act("/api/queue/clear", {}, "حُذف الطابور");
 });
+function cancelPublish() {
+  if (confirm("إلغاء النشر الجاري؟ يتوقف قبل المنصة التالية (الرفع الجاري الآن لمنصة واحدة يكتمل أولا)."))
+    act("/api/publisher/cancel", {}, "سيتوقف النشر قبل المنصة التالية");
+}
+$("#cancel-pub").addEventListener("click", cancelPublish);
 $("#folder").addEventListener("click", () => act("/api/open-folder", { folder: "inbox" }));
 
 function play(name, where) {
