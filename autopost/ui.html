@@ -479,16 +479,17 @@
         <div class="field small"><label>الدقة</label><select data-set="resolution"><option value="1080">1080p (ثابتة، الأسرع)</option><option value="1440">2K إن وُجد (أبطأ)</option></select></div>
         <div class="field small"><label>الترميز</label><select data-set="encoder"><option value="auto">تلقائي: كرت الشاشة إن وُجد</option><option value="cpu">المعالج فقط</option></select></div>
         <div class="field small"><label>الإطارات بالثانية</label><select data-set="fps"><option value="60">60</option><option value="30">30</option></select></div>
-        <div class="field"><label>اتجاه الفيديو</label><select data-set="orientation"><option value="original">نفس اتجاه المصدر</option><option value="vertical">طولي دائما (9:16)</option></select></div>
+        <div class="field"><label>اتجاه الفيديو</label><select data-set="orientation"><option value="original">نفس اتجاه المصدر</option><option value="stream">للبثوث: طولي مقسوم (كاميرا الستريمر فوق واللعب تحت) إذا ظهرت الكاميرا</option><option value="vertical">طولي دائما (9:16)</option></select></div>
       </div>
       <div class="row">
         <div class="field"><label>شكل الكتابة على الفيديو</label><select data-set="clipper.caption_style"><option value="capcut">مثل CapCut: كلمات كبيرة تظهر تباعا</option><option value="sentence">جملة كاملة في كل مرة</option></select></div>
         <div class="field"><label>لغة الكتابة على الفيديو</label><select data-set="clipper.captions_language"><option value="swap">عكس لغة المتحدث (إنكليزي ← عربي)</option><option value="original">نفس لغة المتحدث</option><option value="ar">عربي دائما</option><option value="en">إنكليزي دائما</option></select></div>
         <div class="field"><label>السرعة</label><select data-set="speed_mode"><option value="fast">سريع (الافتراضي)</option><option value="balanced">متوازن: تفريغ كلام أدق وأبطأ</option><option value="accurate">أدق: الأبطأ</option></select></div>
         <div class="field"><label>تفريغ الكلام على</label><select data-set="clipper.whisper_device"><option value="cpu">المعالج (مضمون)</option><option value="gpu">كرت الشاشة NVIDIA (أسرع، يحتاج CUDA)</option></select></div>
-        <div class="field"><label>التأطير عند التحويل إلى طولي</label><select data-set="clipper.layout"><option value="auto">تلقائي (على وجه المتكلم إن وُجد)</option><option value="fit">المشهد كاملا بخلفية مموّهة</option><option value="crop">قص من الوسط</option></select></div>
+        <div class="field"><label>التأطير عند التحويل إلى طولي</label><select data-set="clipper.layout"><option value="auto">تلقائي (على وجه المتكلم، أو مقسوم: كاميرا الستريمر فوق واللعب تحت)</option><option value="fit">المشهد كاملا بخلفية مموّهة</option><option value="crop">قص من الوسط</option></select></div>
       </div>
       <div class="toggle"><input type="checkbox" id="cap" data-set="clipper.captions"><label for="cap">اكتب الكلام على الفيديو</label></div>
+      <div class="toggle"><input type="checkbox" id="ovl" data-set="clipper.title_overlay"><label for="ovl">عنوان جذاب أعلى المقطع في أول 4 ثوان (يشد المشاهد ليكمل)</label></div>
     </div>
 
     <div class="card">

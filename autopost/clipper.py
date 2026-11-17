@@ -412,6 +412,7 @@ SCHEMA = {
             "start": {"type": "number"}, "end": {"type": "number"},
             "title": {"type": "string"}, "hook": {"type": "string"},
             "what_happens": {"type": "string"}, "score": {"type": "integer"},
+            "overlay_ar": {"type": "string"}, "overlay_en": {"type": "string"},
         },
         "required": ["start", "end", "title", "hook", "what_happens", "score"],
         "additionalProperties": False,
@@ -470,7 +471,10 @@ that needs more room than the maximum should be tightened to its best part. Clip
 overlap. Quality over quantity: return fewer clips when the video doesn't have enough \
 strong moments. `score` is 1-100 for how likely the clip is to hold a stranger's attention; \
 order the list best first. Write title, hook and what_happens in the language spoken in \
-the video."""
+the video. Also write `overlay_ar` and `overlay_en`: the same short on-screen headline (3-7 \
+words, may end with one emoji) shown at the top of the clip in its first seconds to make \
+people stay, in Modern Standard Arabic and in English. It teases the payoff without \
+spoiling or lying (e.g. "انتظر النهاية 😭", "He did NOT expect this 😳")."""
 
 
 def _transcript_text(segments, marks=None):
@@ -877,6 +881,92 @@ def face_crop_x(src, start, end, meta):
     return int(min(max(centre - crop_w / 2, 0), meta["width"] - crop_w))
 
 
+def facecam_box(src, start, end, meta):
+    """(x, y, w, h) of a streamer's facecam overlay (a small, steady face near an edge of
+    a gameplay frame), or None. Used to build the split layout: camera on top, game below."""
+    try:
+        import cv2
+    except ImportError:
+        return None
+    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    cap = cv2.VideoCapture(str(src))
+    found, samples = [], 12
+    for i in range(samples):
+        cap.set(cv2.CAP_PROP_POS_MSEC, (start + (end - start) * (i + 0.5) / samples) * 1000)
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        scale = 720 / frame.shape[0]
+        gray = cv2.cvtColor(cv2.resize(frame, None, fx=scale, fy=scale), cv2.COLOR_BGR2GRAY)
+        faces = cascade.detectMultiScale(gray, 1.1, 6, minSize=(28, 28))
+        small = [f for f in faces if f[3] < 0.3 * gray.shape[0]]
+        if small:
+            x, y, w, h = max(small, key=lambda f: f[2] * f[3])
+            found.append((x / scale, y / scale, w / scale, h / scale))
+    cap.release()
+    if len(found) < samples * 0.5:
+        return None
+    xs = sorted(f[0] + f[2] / 2 for f in found)
+    ys = sorted(f[1] + f[3] / 2 for f in found)
+    cx, cy = xs[len(xs) // 2], ys[len(ys) // 2]
+    if xs[-1] - xs[0] > 0.12 * meta["width"] or ys[-1] - ys[0] > 0.12 * meta["height"]:
+        return None  # the face moves around: not a fixed camera overlay
+    near_edge = cx < 0.33 * meta["width"] or cx > 0.67 * meta["width"] or \
+        cy < 0.3 * meta["height"] or cy > 0.7 * meta["height"]
+    if not near_edge:
+        return None  # a face in the middle of the frame is a talking head, not a facecam
+    fh = sorted(f[3] for f in found)[len(found) // 2]
+    # A webcam overlay shows head and shoulders: about 3.4 face heights tall, 4:3 or wider.
+    h = min(meta["height"] * 0.5, fh * 3.4)
+    w = min(meta["width"] * 0.45, h * 4 / 3)
+    x = min(max(cx - w / 2, 0), meta["width"] - w)
+    y = min(max(cy - h * 0.42, 0), meta["height"] - h)
+    return int(x) // 2 * 2, int(y) // 2 * 2, int(w) // 2 * 2, int(h) // 2 * 2
+
+
+SPLIT_CAM = 0.36  # share of the vertical frame given to the facecam in the split layout
+
+
+def split_filter(meta, box, tw, th):
+    """Facecam on top, gameplay (centre of the frame) below, both filling their panel."""
+    x, y, w, h = box
+    cam_h = int(th * SPLIT_CAM) // 2 * 2
+    game_h = th - cam_h
+    return (f"[0:v]split[c][g];"
+            f"[c]crop={w}:{h}:{x}:{y},scale={tw}:{cam_h}:force_original_aspect_ratio=increase,"
+            f"crop={tw}:{cam_h}[cam];"
+            f"[g]scale=-2:{game_h},crop={tw}:{game_h}[game];"
+            f"[cam][game]vstack=inputs=2"), cam_h
+
+
+def add_title(ass, text, size, font, exists):
+    """A short hook headline in a box at the top for the first seconds."""
+    tw, th = size
+    vertical = th > tw
+    fs, margin = (66, 110) if vertical else (50, 40)
+    text = _clean(text).strip()
+    if not text:
+        return False
+    if re.search(r"[\u0590-\u08ff]", text):
+        text = RLM + text + RLM
+    style = (f"Style: Title,{font},{fs},&H00FFFFFF,&H00FFFFFF,&H00141414,&H00141414,-1,0,0,0,"
+             f"100,100,0,0,3,18,0,8,90,90,{margin},1")
+    line = (f"Dialogue: 1,{_ass_time(0)},{_ass_time(4.0)},Title,,0,0,0,,"
+            r"{\fad(120,300)\q2}" + text)
+    if exists:
+        lines = ass.read_text(encoding="utf-8").splitlines()
+        i = lines.index("[Events]") - 1
+        lines.insert(i, style)
+        lines.append(line)
+    else:
+        lines = _ass_header(font, 80, 100, tw, th, 4, 2)
+        i = lines.index("[Events]") - 1
+        lines.insert(i, style)
+        lines.append(line)
+    ass.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
+
+
 def _ass_time(t):
     t = max(t, 0)
     return f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{t % 60:05.2f}"
@@ -938,7 +1028,7 @@ def _chunks(words, size, hold):
     return [g for g in out if g]
 
 
-def write_captions(segments, start, end, path, font, size, style="capcut"):
+def write_captions(segments, start, end, path, font, size, style="capcut", margin_v=None):
     """Burned-in subtitles timed to speech. 'capcut': a few big bold words at a time that
     pop in, with the word being said highlighted. 'sentence': one whole sentence at a
     time. Returns False when nothing is spoken."""
@@ -949,6 +1039,7 @@ def write_captions(segments, start, end, path, font, size, style="capcut"):
 
     if phrases and style == "sentence":
         fs, margin = (68, 420) if vertical else (56, 60)
+        margin = margin_v or margin
         lines = _ass_header(font, fs, margin, tw, th, max(3, fs // 14), 2)
         for i, u in enumerate(phrases):
             t0 = max(0.0, u["start"] - start)
@@ -975,6 +1066,7 @@ def write_captions(segments, start, end, path, font, size, style="capcut"):
 
     # Big, bold, thick outline, in the lower middle where CapCut puts it.
     fs, margin = (96, 560) if vertical else (76, 150)
+    margin = margin_v or margin
     per, hold = (3, 2.4) if vertical else (5, 3.0)
     lines = _ass_header(font, fs, margin, tw, th, max(5, fs // 12), 3)
     highlight = "&H0000E5FF&"  # warm yellow (ASS colours are blue-green-red)
@@ -1011,21 +1103,39 @@ def write_captions(segments, start, end, path, font, size, style="capcut"):
 
 def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
     start, end = clip["start"], clip["end"]
+    crop_x = cam = None
+    if orientation == "stream":
+        # Streams: the vertical split (facecam on top, game below) when the streamer's
+        # camera is in the frame; otherwise the source's own shape.
+        if meta["width"] > meta["height"] * 1.1 and c["layout"] in ("auto", "split"):
+            try:
+                cam = facecam_box(src, start, end, meta)
+            except Exception as e:
+                log.info("Facecam detection failed (%s)", str(e)[:100])
+        orientation = "vertical" if cam else "original"
     tw, th = video.target_size(meta, orientation)
     matches = abs(meta["width"] / meta["height"] - tw / th) <= 0.02
-    crop_x = None
     if tw > th:
         layout = "landscape"
     elif matches:
         layout = "vertical"
     elif c["layout"] == "crop":
         crop_x = int((meta["width"] - meta["height"] * W / H) / 2)
-    elif c["layout"] == "auto":
+    elif cam is not None:
+        pass
+    elif c["layout"] in ("auto", "split"):
         try:
             crop_x = face_crop_x(src, start, end, meta)
+            if crop_x is None and meta["width"] > meta["height"]:
+                cam = facecam_box(src, start, end, meta)
         except Exception as e:  # framing is a nicety; never lose a clip over it
             log.warning("Face detection failed (%s); using blurred fill", str(e)[:120])
-    if crop_x is not None and meta["width"] / meta["height"] > W / H:
+    margin_v = None
+    if cam is not None:
+        chain, cam_h = split_filter(meta, cam, tw, th)
+        layout = "split (facecam + game)"
+        margin_v = th - cam_h - 210  # captions just under the seam, over the game
+    elif crop_x is not None and meta["width"] / meta["height"] > W / H:
         chain = f"[0:v]crop=ih*{W}/{H}:ih:{crop_x}:0,scale={tw}:{th}"
         layout = "face crop" if c["layout"] == "auto" else "centre crop"
     else:
@@ -1033,9 +1143,12 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
         if not matches:
             layout = "blurred fill"
     ass = out.with_suffix(".ass")
-    if c["captions"] and write_captions(caption_segments, start, end, ass,
-                                       c["caption_font"], (tw, th),
-                                       c.get("caption_style", "capcut")):
+    has_ass = bool(c["captions"] and write_captions(
+        caption_segments, start, end, ass, c["caption_font"], (tw, th),
+        c.get("caption_style", "capcut"), margin_v))
+    if c.get("title_overlay", True) and clip.get("overlay"):
+        has_ass = add_title(ass, clip["overlay"], (tw, th), c["caption_font"], has_ass) or has_ass
+    if has_ass:
         chain += f",ass={ass.name}"
     chain += ",setsar=1[v]"
 
@@ -1395,6 +1508,8 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
                 tell("warning", None, f"low_source: {c_info['width']}x{c_info['height']}")
         else:
             c_src, c_info, c_clip, c_caps = src, info, clip, clip_caps[n - 1]
+        lang = caption_target(spoken, c["captions_language"]) if spoken else "ar"
+        c_clip["overlay"] = clip.get("overlay_ar" if lang == "ar" else "overlay_en") or ""
         with _heavy(tell, "render"):
             layout = render(c_src, c_info, c_clip, c_caps, out, c, cfg["orientation"],
                             cfg["fps"])
@@ -1402,7 +1517,7 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
         # render uploads as a Short, a landscape one as a regular video.
         alt = None
         wide_source = c_info["width"] > c_info["height"] * 1.1
-        main_is_wide = wide_source and cfg["orientation"] == "original"
+        main_is_wide = layout == "landscape"
         mode = cfg["youtube_mode"]
         if wide_source and "youtube" in cfg["platforms"] and (
                 mode == "both" or (mode == "short" and main_is_wide)):

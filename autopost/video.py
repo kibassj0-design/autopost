@@ -30,7 +30,7 @@ def target_size(meta, orientation="vertical", resolution=None):
     short = short_side(meta, resolution)
     long = short * 16 // 9
     long -= long % 2  # H.264 needs even sizes
-    if orientation == "original" and meta["width"] > meta["height"] * 1.1:
+    if orientation in ("original", "stream") and meta["width"] > meta["height"] * 1.1:
         return long, short
     return short, long
 

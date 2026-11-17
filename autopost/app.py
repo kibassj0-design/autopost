@@ -36,6 +36,7 @@ SETTINGS = {
     "clipper.min_score": int, "clipper.min_seconds": int, "clipper.max_seconds": int,
     "clipper.whisper_model": str, "clipper.whisper_device": str, "clipper.captions": bool,
     "clipper.captions_language": str, "clipper.caption_style": str, "clipper.layout": str,
+    "clipper.title_overlay": bool,
     "momentum.enabled": bool, "momentum.views_per_hour": int,
     "virality.enabled": bool, "virality.ai_judge": bool, "virality.best_first": bool,
     "virality.min_score": int,

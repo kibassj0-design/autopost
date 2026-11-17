@@ -43,6 +43,7 @@ DEFAULTS = {
         "caption_style": "capcut",
         "caption_font": "Arial",
         "layout": "auto",
+        "title_overlay": True,  # a short hook headline at the top in the first seconds
         "max_height": 1080,
     },
     "virality": {
