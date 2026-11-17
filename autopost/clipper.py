@@ -95,7 +95,8 @@ def download(url, work, max_height, start=None, end=None, tell=lambda *a: None, 
     path = next(p for p in work.glob("source.*") if not p.name.endswith((".part", ".ytdl")))
     meta = {"title": info.get("title") or "", "url": info.get("webpage_url") or url,
             "channel": info.get("uploader") or info.get("channel") or "",
-            "remote": audio_only, "max_height": max_height, "info": info}
+            "remote": audio_only, "max_height": max_height, "info": info,
+            "offset": float(start or 0)}
 
     chat = []
     try:  # chat replay is a bonus signal; many videos simply don't have one
@@ -417,10 +418,16 @@ SYSTEM = """You pick the moments of a long video or livestream that will work as
 short vertical clips (Reels, Shorts, TikTok). The clips are cut and published automatically \
 from the times you give, so nobody fixes them afterwards.
 
-You get the transcript with a start time in seconds in front of every line, and for streams \
-a list of hype signals: seconds where the audio got unusually loud or chat suddenly sped up. \
-Those usually mark a reaction to something that happened a few seconds earlier, so the clip \
-has to begin before the spike, at the setup, not at the scream.
+You get the transcript with a start time in seconds in front of every line. Lines can carry \
+signal marks measured on the video itself:
+  🔊 the audio got unusually loud (🔊🔊 / 🔊🔊🔊 = much louder): shouting, hype, a big moment
+  💬 chat suddenly sped up (💬💬 / 💬💬💬 = a flood)
+  🔁 viewers replayed this part the most (YouTube's "most replayed")
+Signals mark the REACTION to something that happened a few seconds earlier, so a clip has \
+to begin before the spike, at the setup (the play starting, the question, the first line of \
+the story), never at the scream itself. Lines with several marks together are the \
+strongest evidence of a moment, but a quiet line can still be great (a funny line, a story, \
+a hot take): judge the words too.
 
 What makes a clip work:
 - It stands alone. Someone who never saw the stream understands it from its first second \
@@ -430,7 +437,13 @@ begins. Never open mid-sentence or on filler.
 - It has a payoff (the punchline, the win or fail, the answer, the reaction) and ends \
 right after it, on a finished sentence.
 - Strong candidates: funny or shocking moments, clutch plays and fails, big reactions, hot \
-takes, a story with a twist, a genuinely useful tip explained in full.
+takes, a story with a twist, a genuinely useful tip explained in full, an argument or a \
+rage moment, a reveal, an unexpected twist, a wholesome moment with the audience.
+- Weak candidates (score them low or leave them out): menus, loading, waiting, reading \
+donations one after another, routine gameplay talk, "let me check something", greetings and \
+goodbyes, sponsor reads, anything that needs earlier context to be understood.
+- Score as an editor who knows TikTok: 90+ only for something people would share or \
+rewatch, 70-89 a solid clip, 50-69 fine but forgettable, under 50 not worth posting.
 
 Start and end must be start times of transcript lines (end = the start of the first line \
 that is NOT in the clip). Respect the length limits you are given exactly; a great moment \
@@ -441,32 +454,189 @@ order the list best first. Write title, hook and what_happens in the language sp
 the video."""
 
 
-def _transcript_text(segments):
-    return "\n".join(f"[{s['start']:.0f}] {s['text']}" for s in segments)
+def _transcript_text(segments, marks=None):
+    lines = []
+    for s in segments:
+        tag = (marks or {}).get(round(s["start"], 2), "")
+        lines.append(f"[{s['start']:.0f}]{(' ' + tag) if tag else ''} {s['text']}")
+    return "\n".join(lines)
 
 
-def pick_with_ai(segments, peaks, chat_peaks, meta, duration, c, cfg):
+def signal_marks(segments, levels, chat, heatmap):
+    """Per transcript line, emoji marks for how strongly loudness, chat and replays
+    spiked around it (so the AI sees the evidence next to the words)."""
+    import numpy as np
+
+    def z(x):
+        x = np.asarray(x, dtype=np.float32)
+        return (x - x.mean()) / x.std() if len(x) and x.std() > 0 else np.zeros_like(x)
+
+    n = len(levels)
+    curves = {}
+    if n:
+        curves["🔊"] = np.convolve(z(levels), np.ones(3) / 3, "same")
+        if chat:
+            counts = np.bincount([min(int(t), n - 1) for t in chat if t >= 0], minlength=n)
+            curves["💬"] = z(np.convolve(counts, np.ones(10) / 10, "same"))
+        if heatmap is not None and len(heatmap) == n:
+            curves["🔁"] = z(heatmap)
+    marks = {}
+    for seg in segments:
+        a, b = max(0, int(seg["start"]) - 1), min(n, int(seg["end"]) + 9)  # reactions lag
+        tag = ""
+        for sym, curve in curves.items():
+            peak = float(curve[a:b].max()) if b > a else 0.0
+            level = 3 if peak > 3 else 2 if peak > 2.2 else 1 if peak > 1.5 else 0
+            tag += sym * level
+        if tag:
+            marks[round(seg["start"], 2)] = tag
+    return marks
+
+
+def heatmap_curve(meta, duration, offset=0.0):
+    """YouTube's "most replayed" graph as one value per second, or None."""
+    import numpy as np
+
+    heat = (meta.get("info") or {}).get("heatmap") or []
+    if not heat:
+        return None
+    out = np.zeros(int(duration) + 1, dtype=np.float32)
+    for h in heat:
+        a = int(max(0, h.get("start_time", 0) - offset))
+        b = int(min(len(out), h.get("end_time", 0) - offset + 1))
+        if b > a:
+            out[a:b] = np.maximum(out[a:b], float(h.get("value") or 0))
+    return out if out.any() else None
+
+
+WINDOW = 20 * 60   # long videos are read in parts of this many seconds...
+OVERLAP = 90       # ...overlapping a little, so a moment on a border is not cut in two
+
+
+def _windows(segments, duration):
+    if duration <= WINDOW * 1.25:
+        return [segments]
+    out, start = [], 0.0
+    while start < duration:
+        end = start + WINDOW
+        part = [x for x in segments if x["end"] > start and x["start"] < end]
+        if part:
+            out.append(part)
+        start = end - OVERLAP
+    return out
+
+
+def _ask_moments(part, marks, meta, duration, c, cfg, where=""):
     brief = [
         f"Video: {meta['title']!r} by {meta['channel'] or 'unknown'}, {duration:.0f} seconds long.",
-        f"Find up to {c['count']} clips, each between {c['min_seconds']} and "
-        f"{c['max_seconds']} seconds long.",
+        f"Find clips between {c['min_seconds']} and {c['max_seconds']} seconds long.",
     ]
+    if where:
+        brief.append(where)
     if c.get("auto"):
         brief.append(
             "How many is up to the video: return only moments strong enough to pull views "
-            "on their own (hype, shock, big laughs, clutch plays, heated or surprising "
-            f"lines), each scored honestly. A score under {c['min_score']} will be dropped, "
-            "so don't pad the list and don't leave a strong one out: a dull video may have "
-            "just one or two, a packed one many.")
-    if peaks:
-        brief.append("Loud moments (seconds): " + ", ".join(map(str, sorted(peaks))))
-    if chat_peaks:
-        brief.append("Chat spikes (seconds): " + ", ".join(map(str, sorted(chat_peaks))))
-    brief.append("Transcript:\n" + _transcript_text(segments))
-
+            "on their own, each scored honestly. A score under "
+            f"{c['min_score']} will be dropped, so don't pad the list and don't leave a "
+            "strong one out: a dull part may have none, a packed one many.")
+    brief.append("Transcript:\n" + _transcript_text(part, marks))
     data, who = llm.ask_json(SYSTEM, "\n\n".join(brief), SCHEMA, cfg, effort="high")
-    log.info("%s proposed %d moments", who, len(data["clips"]))
-    return data["clips"]
+    return data["clips"], who
+
+
+RERANK_SYSTEM = """You are the final editor choosing which short clips get posted on \
+TikTok, Reels and Shorts. You get every candidate found in one video, each with its \
+transcript and the signals measured on the video (🔊 loud, 💬 chat spike, 🔁 most replayed).
+
+Compare them against each other and give each a final `score` 1-100 on ONE scale for the \
+whole video: how likely is it to stop a stranger's scroll and be watched to the end? \
+90+ only for something people would share or rewatch; under 50 for something not worth \
+posting. Set `keep` false for duplicates of a better candidate, for clips that need \
+earlier context, and for clips with no real payoff. You may move `start` earlier (to \
+include the setup) or `end` (to stop right after the payoff), using times of the given \
+lines and staying within the length limits. Return every candidate by its index `i`."""
+
+RERANK_SCHEMA = {
+    "type": "object",
+    "properties": {"clips": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"i": {"type": "integer"}, "score": {"type": "integer"},
+                       "keep": {"type": "boolean"}, "start": {"type": "number"},
+                       "end": {"type": "number"}},
+        "required": ["i", "score", "keep", "start", "end"],
+    }}},
+    "required": ["clips"],
+}
+
+
+def _rerank(cands, segments, marks, meta, c, cfg):
+    """One more look at all candidates together: one scale for the whole video, setup
+    included, weak and duplicate ones out."""
+    blocks = []
+    for i, k in enumerate(cands):
+        lines = [x for x in segments if x["end"] > k["start"] - 20 and x["start"] < k["end"] + 10]
+        blocks.append(f"## Candidate {i}: {k['start']:.0f}s-{k['end']:.0f}s, first score "
+                      f"{k['score']}\nTitle: {k['title']}\nWhat happens: {k['what_happens']}\n"
+                      f"Transcript (with 20 s before it, in case the setup is there):\n"
+                      + _transcript_text(lines, marks))
+    brief = (f"Video: {meta['title']!r} by {meta['channel'] or 'unknown'}.\n"
+             f"Clips must be {c['min_seconds']}-{c['max_seconds']} seconds long.\n\n"
+             + "\n\n".join(blocks))
+    data, who = llm.ask_json(RERANK_SYSTEM, brief, RERANK_SCHEMA, cfg, effort="high")
+    out = []
+    for r in data["clips"]:
+        i = r.get("i")
+        if not isinstance(i, int) or not 0 <= i < len(cands) or not r.get("keep", True):
+            continue
+        k = dict(cands[i])
+        k["score"] = int(r["score"])
+        start, end = float(r.get("start", k["start"])), float(r.get("end", k["end"]))
+        # accept the edit only when it stays close to the moment that was found
+        if abs(start - k["start"]) <= 45 and abs(end - k["end"]) <= 45 and end > start:
+            k["start"], k["end"] = start, end
+        out.append(k)
+    log.info("%s ranked %d candidates, kept %d", who, len(cands), len(out))
+    return out
+
+
+def _dedupe(cands):
+    kept = []
+    for k in sorted(cands, key=lambda x: -x["score"]):
+        overlap = [o for o in kept if min(o["end"], k["end"]) - max(o["start"], k["start"])
+                   > 0.5 * min(o["end"] - o["start"], k["end"] - k["start"])]
+        if not overlap:
+            kept.append(k)
+    return kept
+
+
+def pick_with_ai(segments, marks, meta, duration, c, cfg):
+    """Candidates from each part of the video, then one final ranking of all of them."""
+    windows = _windows(segments, duration)
+    cands, problems = [], []
+    for n, part in enumerate(windows, 1):
+        where = (f"This is part {n} of {len(windows)} of the video "
+                 f"({part[0]['start']:.0f}s-{part[-1]['end']:.0f}s); look only at this part."
+                 if len(windows) > 1 else "")
+        if _cancelled():
+            raise Cancelled()
+        try:
+            got, who = _ask_moments(part, marks, meta, duration, c, cfg, where)
+            cands += got
+            log.info("%s proposed %d moments%s", who, len(got),
+                     f" in part {n}/{len(windows)}" if len(windows) > 1 else "")
+        except (RuntimeError, ValueError, KeyError, TypeError) as e:
+            problems.append(str(e))
+            if len(windows) == 1:
+                raise
+    if not cands and problems:
+        raise RuntimeError(problems[0])
+    cands = _dedupe(cands)
+    if len(cands) > 1:
+        try:
+            cands = _rerank(cands, segments, marks, meta, c, cfg)
+        except (RuntimeError, ValueError, KeyError, TypeError) as e:
+            log.info("Final ranking unavailable (%s); keeping the first scores", str(e)[:120])
+    return cands
 
 
 def pick_by_signals(curve, meta, c):
@@ -492,8 +662,11 @@ def fit_clips(clips, segments, duration, c):
     for clip in sorted(clips, key=lambda x: -x["score"]):
         start = max(0.0, float(clip["start"]))
         end = min(duration, float(clip["end"]))
-        if starts:  # begin on the line that starts nearest the requested time
-            start = min(starts, key=lambda t: abs(t - start))
+        if starts:
+            # Begin on the last line that starts at or just before the requested time, so
+            # the setup is kept; the nearest line could be the one after it.
+            before = [t for t in starts if t <= start + 0.75]
+            start = max(before) if before else min(starts, key=lambda t: abs(t - start))
             inside = [e for e in ends if start + lo <= e <= start + hi]
             wanted = [e for e in inside if e <= end + 2]
             if wanted:
@@ -1029,10 +1202,17 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
                     info["width"], info["height"])
         tell("warning", None, f"low_source: {info['width']}x{info['height']}")
 
-    segments, curve, spoken, wav = [], [], None, None
+    segments, curve, spoken, wav, levels, heat = [], [], None, None, [], None
     if info["acodec"]:
         wav = extract_audio(src, work)
-        curve = hype_curve(loudness(wav), chat)
+        levels = loudness(wav)
+        heat = heatmap_curve(meta, len(levels) - 1, meta.get("offset", 0.0))
+        curve = hype_curve(levels, chat)
+        if heat is not None and len(heat) == len(curve):
+            import numpy as np
+            hz = (heat - heat.mean()) / heat.std() if heat.std() > 0 else heat * 0
+            curve = curve + 0.8 * np.convolve(hz, np.ones(15) / 15, "same")
+            log.info("Using YouTube's most-replayed graph as a signal")
         try:
             tell("transcribe", 0, meta["title"])
             with _heavy(tell, "transcribe"):
@@ -1049,10 +1229,9 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
     clips = []
     tell("pick")
     if segments:
-        peaks = top_peaks(curve, 25, 30)
-        chat_peaks = top_peaks(hype_curve([0.0] * len(curve), chat), 25, 30) if chat else []
+        marks = signal_marks(segments, levels, chat, heat)
         try:
-            clips = pick_with_ai(segments, peaks, chat_peaks, meta, info["duration"], c, cfg)
+            clips = pick_with_ai(segments, marks, meta, info["duration"], c, cfg)
         except (RuntimeError, ValueError, KeyError, TypeError) as e:
             log.warning("AI moment selection unavailable (%s); "
                         "falling back to loudness/chat peaks", str(e)[:160])
