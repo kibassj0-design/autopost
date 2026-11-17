@@ -35,6 +35,7 @@ class Publisher:
         self._db = None
         self.lock = threading.Lock()
         self.retries = []         # failed posts to send again, one platform each
+        self.scores = {}          # clip name -> virality score (filled by the predictor)
 
     def retry(self, post_id):
         """Send a failed post again to its platform, at the next pass (no waiting gap:
@@ -60,6 +61,10 @@ class Publisher:
         """Videos waiting in inbox/, in publishing order."""
         files = sorted(p for p in self.inbox.iterdir() if p.suffix.lower() in VIDEO_EXT
                        and not p.name.endswith(".alt.mp4"))
+        v = self.cfg.get("virality", {})
+        if v.get("enabled", True) and v.get("best_first", True):
+            # the best chance first; clips not scored yet keep their place after them
+            files.sort(key=lambda p: -self.scores.get(p.name, -1))
         if self.first:
             files.sort(key=lambda p: p.name != self.first)
         return files
@@ -77,6 +82,17 @@ class Publisher:
             raise RuntimeError("This clip is being published right now")
         for extra in ("", ".txt", ".alt.mp4"):
             (path.with_suffix(extra) if extra else path).unlink(missing_ok=True)
+
+    def _scored(self, path):
+        """With the predictor on, a clip waits (up to 10 minutes) for its score, so the
+        best one goes first; one under the minimum score waits for the user."""
+        v = self.cfg.get("virality", {})
+        if not v.get("enabled", True) or path.name == self.first:
+            return True
+        score = self.scores.get(path.name)
+        if score is None:
+            return time.time() - path.stat().st_mtime > 600
+        return score >= v.get("min_score", 0)
 
     def _stable(self, path):
         """True once a file's size stopped changing between two scans (copy finished)."""
@@ -182,7 +198,7 @@ class Publisher:
         cfg, m = self.cfg, self.cfg["momentum"]
         accounts = any(config.connected(p) for p in cfg["platforms"])
 
-        ready = [p for p in self.queued() if self._stable(p)]
+        ready = [p for p in self.queued() if self._stable(p) and self._scored(p)]
         wait = self.next_post_at() - time.time()
         st = cfg.get("smart_timing", {})
         if ready and not self.release and st.get("enabled", True) and not (

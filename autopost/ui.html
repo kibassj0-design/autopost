@@ -130,6 +130,16 @@
   .item .actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 9px; border-radius: 999px;
            background: var(--panel2); color: var(--muted); border: 1px solid var(--line-soft); }
+  .viral { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; font-size: 12px; padding: 3px 10px;
+           border-radius: 999px; cursor: pointer; border: 1px solid transparent; }
+  .viral.hi { color: var(--ok); background: var(--ok-soft); }
+  .viral.mid { color: var(--warn); background: var(--warn-soft); }
+  .viral.lo { color: var(--bad); background: var(--bad-soft); }
+  .viral.wait { color: var(--muted); background: var(--panel2); border-color: var(--line); cursor: default; }
+  .vbar { display: grid; grid-template-columns: 150px 1fr 36px; gap: 10px; align-items: center; font-size: 13px; margin: 6px 0; }
+  .vbar .track { height: 8px; border-radius: 99px; background: var(--panel2); overflow: hidden; }
+  .vbar .track i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+  .vscore { font-size: 44px; font-weight: 800; line-height: 1; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
   .tile { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
   .tile .big { font-size: 22px; font-weight: 700; margin: 2px 0; }
@@ -500,6 +510,10 @@
       </div>
       <div class="row"><div class="field"><label>شكل النشر على يوتيوب</label><select data-set="youtube_mode"><option value="short">Short فقط (طولي)</option><option value="both">Short وفيديو عادي معا</option><option value="video">كما هو (العرضي يُنشر فيديو عادي)</option></select></div><div class="field"><label>طريقة النشر على تيك توك</label><select data-set="tiktok_mode"><option value="direct">نشر مباشر (عام بعد مراجعة تيك توك، وإلا خاص)</option><option value="draft">إرسال لصندوق تيك توك ثم تنشره أنت عاما بضغطة</option></select></div></div>
       <div class="toggle"><input type="checkbox" id="mom" data-set="momentum.enabled"><label for="mom">عند ارتفاع المشاهدات انشر المقطع التالي فورا</label></div>
+      <div class="toggle"><input type="checkbox" id="vir" data-set="virality.enabled"><label for="vir">توقع الانتشار: قيّم كل مقطع قبل نشره (من 100)</label></div>
+      <div class="toggle"><input type="checkbox" id="virai" data-set="virality.ai_judge"><label for="virai">اجعل الذكاء الاصطناعي يشاهد المقطع ويقيّمه ويقترح تحسينات (يستهلك من حصة المفتاح)</label></div>
+      <div class="toggle"><input type="checkbox" id="virbest" data-set="virality.best_first"><label for="virbest">انشر المقطع الأعلى توقعا أولا</label></div>
+      <div class="row"><div class="field small"><label>لا تنشر تلقائيا ما تحت هذه الدرجة (0 = انشر الكل)</label><input data-set="virality.min_score" type="number" min="0" max="100"></div></div>
       <div class="toggle"><input type="checkbox" id="smart" data-set="smart_timing.enabled"><label for="smart">في أوقات الذروة انشر المقطع التالي فورا بدون انتظار الفاصل المعتاد</label></div>
       <div class="toggle"><input type="checkbox" id="peaksonly" data-set="smart_timing.peaks_only"><label for="peaksonly">انشر من الطابور في أوقات الذروة فقط (المجدولة تُنشر في موعدها دائما)</label></div>
       <div class="row"><div class="field small"><label>أقل فاصل بين منشورين في الذروة (دقيقة)</label><input data-set="smart_timing.peak_gap_minutes" type="number" min="15"></div></div>
@@ -557,6 +571,15 @@
   <div class="dlg-actions">
     <button class="btn ghost" id="d-cancel">إلغاء</button>
     <button class="btn primary" id="d-ok">حفظ</button>
+  </div>
+</dialog>
+
+<dialog id="vdlg">
+  <h2>توقع الانتشار</h2>
+  <div id="vbody"></div>
+  <div class="dlg-actions">
+    <button class="btn ghost" id="v-rescore">أعد التقييم</button>
+    <button class="btn primary" id="v-close">إغلاق</button>
   </div>
 </dialog>
 
@@ -831,13 +854,14 @@ function renderQueue(s) {
     status = wait > 0 ? "المنشور التالي " + fromNow(p.next_post_at, p.now) + "." : "المنشور التالي خلال لحظات.";
   }
   $("#pubstatus").textContent = status;
-  keyed($("#queue"), s.queue, c => c.name, c => JSON.stringify([c.title, c.seconds]),
+  keyed($("#queue"), s.queue, c => c.name, c => JSON.stringify([c.title, c.seconds, c.viral]),
     c => el("div", { class: "item" }, [
       el("div", { class: "top" }, [
         el("div", { class: "title" }, [
           el("div", { class: "name", text: c.title }),
           el("div", { class: "muted small ltr", text: fmtDur(c.seconds) + "  ·  " + c.name })]),
         el("div", { class: "actions" }, [
+          viralBadge(c.viral, c.name),
           el("button", { class: "btn sm", onclick: () => play(c.name, "inbox") }, [icon("i-play"), "معاينة"]),
           el("button", { class: "btn sm", onclick: () => openDialog({ mode: "queue", name: c.name, title: c.title }) }, [icon("i-cal"), "جدولة"]),
           el("button", { class: "btn sm", text: "انشر الآن", onclick: () => act("/api/queue/publish", { name: c.name }) }),
@@ -856,7 +880,7 @@ function renderSchedule(s) {
     rows.push({ kind: "item", key: "s-" + x.id, x });
   }
   keyed($("#sched"), rows, r => r.key,
-    r => r.kind === "day" ? r.label : JSON.stringify([r.x.status, r.x.at, r.x.caption, r.x.platforms, r.x.result, Math.floor((r.x.at - now) / 60)]),
+    r => r.kind === "day" ? r.label : JSON.stringify([r.x.status, r.x.at, r.x.caption, r.x.platforms, r.x.result, Math.floor((r.x.at - now) / 60), r.x.viral]),
     r => {
       if (r.kind === "day") return el("div", { class: "day", text: r.label });
       const x = r.x;
@@ -880,6 +904,7 @@ function renderSchedule(s) {
               el("span", { class: "badge " + st[0], text: st[1] }),
               ...x.platforms.map(p => el("span", { class: "badge", text: PLATFORMS[p] || p })),
               x.caption ? el("span", { class: "badge", text: "كابشنك" }) : el("span", { class: "badge", text: "كابشن تلقائي" }),
+              x.status === "pending" && x.exists ? viralBadge(x.viral, x.name) : null,
               ...links])]),
           el("div", { class: "actions" }, [
             x.exists ? el("button", { class: "btn sm", onclick: () => play(x.name, "scheduled") }, [icon("i-play"), "معاينة"]) : null,
@@ -1169,6 +1194,49 @@ $$("[data-disconnect]").forEach(b => b.addEventListener("click", async () => {
   accountMsg(p, "");
 }));
 
+// ---------------------------------------------------------------- virality
+function viralBadge(score, name) {
+  if (score == null) return el("span", { class: "viral wait", text: "🔥 يقيّم…", title: "توقع الانتشار يُحسب الآن" });
+  const cls = score >= 70 ? "hi" : score >= 50 ? "mid" : "lo";
+  return el("span", { class: "viral " + cls, text: "🔥 " + score, title: "توقع الانتشار: اضغط للتفاصيل", onclick: () => showViral(name) });
+}
+let vName = null;
+function renderViral(d) {
+  if (!d || d.score == null) { $("#vbody").replaceChildren(el("div", { class: "muted", text: "لم يُقيَّم هذا المقطع بعد." })); return; }
+  const lbl = { moment: "قوة اللحظة", judge: "تقييم الذكاء الاصطناعي", hook: "بداية تشد (أول 3 ثوان)", energy: "حماس الصوت", pace: "سرعة الإيقاع", length: "طول مناسب", format: "شكل الشاشة" };
+  const kids = [
+    el("div", { class: "row", style: "align-items:center;gap:14px;margin-bottom:10px" }, [
+      el("div", { class: "vscore", text: d.score }),
+      el("div", {}, [el("div", { text: "فرصة انتشار " + d.level }),
+        el("div", { class: "muted small", text: d.learned ? "الأوزان متعلمة من نتائج حسابك" : "أوزان عامة حتى تتجمع نتائج حسابك" })])])];
+  for (const [k, v] of Object.entries(d.parts)) {
+    if (v == null) continue;
+    kids.push(el("div", { class: "vbar" }, [el("span", { text: lbl[k] || k }),
+      el("div", { class: "track" }, el("i", { style: "width:" + v + "%" })), el("b", { text: v })]));
+  }
+  if (d.ai) kids.push(el("div", { class: "muted small", style: "margin-top:6px",
+    text: "الذكاء الاصطناعي: البداية " + d.ai.hook + "، العاطفة " + d.ai.emotion + "، قابلية المشاركة " + d.ai.shareability + "، الوضوح " + d.ai.clarity }));
+  if (d.tips && d.tips.length) {
+    kids.push(el("h3", { text: "كيف ترفع فرصته", style: "font-size:15px;margin:14px 0 4px" }));
+    kids.push(el("ul", { style: "margin:0;padding-inline-start:18px" }, d.tips.map(t => el("li", { text: t }))));
+  }
+  $("#vbody").replaceChildren(...kids);
+}
+async function showViral(name) {
+  vName = name;
+  $("#vbody").replaceChildren(el("div", { class: "muted", text: "يحمّل…" }));
+  $("#vdlg").showModal();
+  try { renderViral(await api("/api/virality", { name })); } catch (e) { $("#vbody").replaceChildren(note(e.message, "bad")); }
+}
+$("#v-close").addEventListener("click", () => $("#vdlg").close());
+$("#v-rescore").addEventListener("click", async () => {
+  const b = $("#v-rescore"); b.disabled = true;
+  $("#vbody").replaceChildren(el("div", { class: "muted", text: "يعيد التقييم… (قد يأخذ نصف دقيقة)" }));
+  try { renderViral(await api("/api/virality", { name: vName, rescore: true })); refresh(); }
+  catch (e) { $("#vbody").replaceChildren(note(e.message, "bad")); }
+  b.disabled = false;
+});
+
 // ---------------------------------------------------------------- insights
 const fmtNum = n => n == null ? "—" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "K" : n.toLocaleString("en");
 const hh = h => { const x = ((h % 24) + 24) % 24; return (x % 12 || 12) + (x < 12 ? " ص" : " م"); };
@@ -1198,6 +1266,12 @@ async function loadInsights() {
   } else {
     own.push(el("div", { class: "muted small", text: "تتعلم الأداة أوقات حسابك: " + d.measured + " من " + d.needed + " منشورا مقاسا. حتى ذلك تعتمد الأوقات العامة أدناه." }));
   }
+  try {
+    const a = await api("/api/virality", {});
+    own.push(el("div", { class: "muted small", style: "margin-top:8px", text: a.corr == null
+      ? "دقة توقع الانتشار: تُحسب بعد نشر 4 مقاطع مقيّمة على الأقل ومرور يوم عليها (الآن " + a.clips + ")."
+      : "دقة توقع الانتشار على " + a.clips + " مقطعا: " + (a.corr >= 0.5 ? "جيدة" : a.corr >= 0.2 ? "متوسطة" : "ضعيفة بعد") + " (ارتباط " + a.corr + ")، وتتحسن الأوزان تلقائيا بعد " + a.needed + " مقاطع." }));
+  } catch (e) {}
   $("#own").replaceChildren(...own);
   $("#guide").replaceChildren(...Object.values(d.guide).map(g => el("div", { class: "g" }, [
     el("h3", { text: g.name }),

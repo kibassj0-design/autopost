@@ -16,7 +16,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import backup, checks, config, llm, store, timing, updater, video
+from . import backup, checks, config, llm, store, timing, updater, video, virality
 from .platforms import tiktok, youtube
 from .publisher import Publisher
 
@@ -37,6 +37,8 @@ SETTINGS = {
     "clipper.whisper_model": str, "clipper.whisper_device": str, "clipper.captions": bool,
     "clipper.captions_language": str, "clipper.caption_style": str, "clipper.layout": str,
     "momentum.enabled": bool, "momentum.views_per_hour": int,
+    "virality.enabled": bool, "virality.ai_judge": bool, "virality.best_first": bool,
+    "virality.min_score": int,
     "smart_timing.enabled": bool, "smart_timing.peak_gap_minutes": int,
     "smart_timing.peaks_only": bool,
 }
@@ -75,6 +77,38 @@ class App:
                        "checked": None, "error": "", "busy": False}
         threading.Thread(target=self._update_loop, daemon=True).start()
         threading.Thread(target=self._backup_loop, daemon=True).start()
+        threading.Thread(target=self._predict_loop, daemon=True).start()
+
+    def _predict_loop(self):
+        """Score each new clip (queue and schedule) once, in the background."""
+        db = store.connect()
+        self.publisher.scores.update(virality.all_scores(db))
+        failed = set()
+        while True:
+            time.sleep(10)
+            if not self.cfg.get("virality", {}).get("enabled", True):
+                continue
+            path = None
+            try:
+                todo = [p for p in self.publisher.queued()
+                        if p.name not in self.publisher.scores and p.name not in failed]
+                todo += [Path(r["path"]) for r in self.schedule_list()
+                         if r["status"] == "pending" and r["exists"]
+                         and r["name"] not in self.publisher.scores and r["name"] not in failed]
+                if not todo:
+                    continue
+                path = todo[0]
+                if path.stat().st_size == 0 or time.time() - path.stat().st_mtime < 5:
+                    continue  # still being written
+                note_file = path.with_suffix(".txt")
+                note = note_file.read_text(encoding="utf-8") if note_file.exists() else ""
+                data = virality.predict(path, note, self.cfg, db)
+                self.publisher.scores[path.name] = data["score"]
+                log.info("Virality %s: %d/100 (%s)", path.name, data["score"], data["level"])
+            except Exception as e:
+                if path is not None:
+                    failed.add(path.name)  # not again this run; "أعد التقييم" can retry it
+                log.warning("Virality prediction failed: %s", str(e)[:200])
 
     def _backup_loop(self):
         while True:  # posts and schedule change all day; keys are saved when they change
@@ -271,6 +305,7 @@ class App:
             r["result"] = json.loads(r["result"]) if r["result"] else None
             r["name"] = Path(r["path"]).name
             r["exists"] = Path(r["path"]).is_file()
+            r["viral"] = self.publisher.scores.get(r["name"])
         return rows
 
     # ---- state for the page
@@ -294,7 +329,7 @@ class App:
                 first = note.read_text(encoding="utf-8").splitlines()[:1]
                 title = first[0].removeprefix("Clip title: ") if first else ""
             clips.append({"name": p.name, "title": title or p.stem,
-                          "seconds": self._duration(p)})
+                          "seconds": self._duration(p), "viral": pub.scores.get(p.name)})
         db = store.connect()
         posts = [dict(r) for r in db.execute(
             "SELECT p.id, p.platform, p.url, p.error, p.published_at, v.title, v.parent_id,"
@@ -684,6 +719,25 @@ def make_handler(app):
                 _open_folder(folder)
             elif path == "/api/posts/retry":
                 app.publisher.retry(int(body["id"]))
+            elif path == "/api/virality":
+                db = store.connect()
+                try:
+                    if body.get("rescore"):
+                        name = Path(str(body["name"])).name
+                        src = next((p for p in [pub.inbox / name, app.schedule_dir() / name]
+                                    if p.is_file()), None)
+                        if src is None:
+                            raise ValueError("المقطع غير موجود.")
+                        note_file = src.with_suffix(".txt")
+                        note = note_file.read_text(encoding="utf-8") if note_file.exists() else ""
+                        data = virality.predict(src, note, app.cfg, db)
+                        pub.scores[name] = data["score"]
+                        return data
+                    if body.get("name"):
+                        return virality.get(db, str(body["name"])) or {}
+                    return virality.accuracy(db)
+                finally:
+                    db.close()
             elif path == "/api/insights":
                 db = store.connect()
                 try:

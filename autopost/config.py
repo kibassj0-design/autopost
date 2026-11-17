@@ -45,6 +45,12 @@ DEFAULTS = {
         "layout": "auto",
         "max_height": 1080,
     },
+    "virality": {
+        "enabled": True,      # score every clip before it is posted
+        "ai_judge": True,     # let the AI watch stills and read the speech (uses AI quota)
+        "best_first": True,   # post the clip with the best chance first
+        "min_score": 0,       # clips under this stay in the queue for you to decide (0 = off)
+    },
     "smart_timing": {
         "enabled": True,          # in a busy hour, post the next clip without the usual gap
         "peak_gap_minutes": 45,   # ...but never closer than this to the previous post

@@ -288,7 +288,18 @@ def _model(name, device="cpu", compute_type="int8"):
     return _MODELS[key]
 
 
-def transcribe_clip(audio, start, end, model_name, language, device="cpu"):
+# English speech gets a model trained for English only: far fewer misheard words than
+# "small", which matter most when the words are then translated into Arabic.
+ENGLISH_CAPTION_MODEL = "distil-large-v3"
+
+
+def caption_model(cfg, spoken):
+    if spoken == "en" and cfg.get("speed_mode") in ("fast", "balanced", None):
+        return ENGLISH_CAPTION_MODEL
+    return CAPTION_MODELS.get(cfg.get("speed_mode"), "small")
+
+
+def transcribe_clip(audio, start, end, model_name, language, device="cpu", hint=""):
     """Careful second pass over one clip with a bigger model and a full beam: these are
     the words that end up on screen. Times come back on the source's clock."""
     rate = 16000
@@ -297,7 +308,9 @@ def transcribe_clip(audio, start, end, model_name, language, device="cpu"):
     model = _model(model_name, "cuda" if device == "gpu" else "cpu", compute)
     segments, info = model.transcribe(
         audio[a:b], language=language, beam_size=5, word_timestamps=True, vad_filter=True,
-        condition_on_previous_text=False)
+        condition_on_previous_text=False,
+        # the title spells the names, games and slang the streamer is likely to say
+        initial_prompt=hint[:200] or None)
     offset = a / rate
     out = []
     for x in segments:
@@ -527,8 +540,18 @@ Rules:
 gaming talk and idioms become what a native speaker of the target language would say for \
 the same thing ("I got him" = I killed / took him down; "he's one shot" = one hit from \
 dying; "let's go" when cheering = a cheer, not "let us leave"; "no way" = disbelief).
-- Arabic must be correct, natural Modern Standard Arabic (الفصحى): grammatical, idiomatic, \
-no dialect, no literal calques. English must be natural standard English.
+- Arabic must be correct Modern Standard Arabic (الفصحى), in the simple, natural style of \
+professional Arabic subtitles (like Netflix Arabic subtitles), not stiff written style: no \
+dialect, no literal calques, and no needless formal openers (إنني، إنه لـ، لقد قمت بـ، \
+يا له من) when a plain sentence says it. Short spoken lines stay short and spoken. Examples:
+  "I hope it keeps going" -> أتمنى أن يستمر  (not: إنني آمل الاستمرار)
+  "Let's go!" (cheering) -> هيا! / رائع!   (not: لنذهب)
+  "No way!" -> مستحيل!  /  "Oh my God" -> يا إلهي!
+  "That's crazy" -> هذا جنوني  /  "I'm dead" (laughing) -> سأموت من الضحك
+  "He's one shot" -> بقيت له ضربة واحدة  /  "GG" -> مباراة جيدة
+  "Corsair" (the brand) -> كورسير ; a question about it keeps its meaning, never a \
+dictionary word like ملحقات for something that is not said.
+- English must be natural standard English.
 - Every line entirely in the target language. Keep names of people, games, weapons, maps \
 and brands as readers of that language usually write them.
 - Speech recognition makes mistakes: when a word is clearly misheard, translate what was \
@@ -540,7 +563,10 @@ or kill-feed callouts, music lyrics, ads, text-to-speech donations or another pl
 voice chat, get an empty string so they are not shown.
 - Each line is shown alone on screen for a couple of seconds: keep it short and clear, \
 never longer than needed. Do not merge, split, reorder or skip lines: exactly one output \
-line per input number."""
+line per input number. A line may continue the previous one's sentence: translate it as \
+that continuation, so the two read correctly one after the other.
+- Before answering, reread your translation as a native reader of the target language \
+and fix anything awkward, wrong in grammar, or not what the speaker meant."""
 
 
 def caption_target(spoken, setting):
@@ -553,6 +579,14 @@ def caption_target(spoken, setting):
     return setting
 
 
+def _mostly_arabic(texts):
+    texts = [t for t in texts if t and t.strip()]
+    if not texts:
+        return True
+    arabic = sum(1 for t in texts if re.search(r"[\u0600-\u06FF]", t))
+    return arabic >= len(texts) * 0.7
+
+
 def translate_units(units, target, cfg, context=""):
     """Translate one clip's subtitle units in one request, with the clip's context.
     Returns (translated units, who translated). Falls back to the keyless translator."""
@@ -561,19 +595,36 @@ def translate_units(units, target, cfg, context=""):
     numbered = "\n".join(f"{i}: {u['text']}" for i, u in enumerate(units))
     brief = (f"Video: {context}\n" if context else "") + \
         f"Translate into {LANG_NAMES.get(target, target)}:\n\n{numbered}"
-    who = None
-    try:
-        data, who = llm.ask_json(TRANSLATE_SYSTEM, brief, TRANSLATE_SCHEMA, cfg,
-                                 effort="high", max_tokens=32000)
-        lines = {l["i"]: l["text"].strip() for l in data["lines"]}
-        if len([i for i in range(len(units)) if i in lines]) < len(units) * 0.9:
-            raise RuntimeError(f"translation returned {len(lines)} of {len(units)} lines")
-    except (RuntimeError, ValueError, KeyError, TypeError) as e:
-        log.warning("AI translation unavailable (%s); using the basic translator",
-                    str(e)[:160])
+    who, lines = None, None
+    for attempt in range(2):
+        try:
+            data, who = llm.ask_json(TRANSLATE_SYSTEM, brief, TRANSLATE_SCHEMA, cfg,
+                                     effort="high", max_tokens=32000)
+            lines = {l["i"]: l["text"].strip() for l in data["lines"]}
+            if len([i for i in range(len(units)) if i in lines]) < len(units) * 0.9:
+                raise RuntimeError(f"translation returned {len(lines)} of {len(units)} lines")
+            if target == "ar" and not _mostly_arabic(lines.values()):
+                raise RuntimeError("the translation is not in Arabic")
+            break
+        except (RuntimeError, ValueError, KeyError, TypeError) as e:
+            lines = None
+            if attempt == 0 and llm.providers(cfg):
+                # Free AI quotas run out per minute: wait one minute and ask again
+                # rather than fall back to a word-by-word translation. (Rendering
+                # carries on meanwhile, so this costs little.)
+                log.info("AI translation failed (%s); asking again in a minute", str(e)[:120])
+                for _ in range(60):
+                    if _cancelled():
+                        raise Cancelled()
+                    time.sleep(1)
+                continue
+            log.warning("AI translation unavailable (%s); using the basic translator",
+                        str(e)[:160])
+    if lines is None:
         from . import translate
         try:
-            lines = dict(enumerate(translate.lines([u["text"] for u in units], target)))
+            lines = dict(enumerate(translate.lines_in_context([u["text"] for u in units],
+                                                              target)))
             who = "basic"
         except Exception as e2:  # nothing reachable: keep the spoken words
             log.warning("Basic translator unavailable too (%s)", str(e2)[:120])
@@ -832,7 +883,7 @@ def _ffmpeg(cmd, cwd):
 def _note(clip, meta, segments, spoken_lang=None):
     spoken = " ".join(s["text"] for s in segments
                       if s["end"] > clip["start"] and s["start"] < clip["end"])
-    lines = [f"Clip title: {clip['title']}"]
+    lines = [f"Clip title: {clip['title']}", f"Moment score: {int(clip.get('score') or 0)}"]
     if clip["hook"]:
         lines.append(f"Hook: {clip['hook']}")
     if clip["what_happens"]:
@@ -1047,15 +1098,27 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
                   for k in clips]
     clip_caps = [list(w) for w in clip_words]
     if c["captions"] and segments and wav is not None:
-        model_name = CAPTION_MODELS.get(cfg.get("speed_mode"), "small")
+        model_name = caption_model(cfg, spoken)
+        hint = meta["title"] + "."
         tell("transcribe_clips")
         try:
             audio = read_wav(wav)
             with _heavy(tell, "transcribe_clips"):
                 for i, k in enumerate(clips):
                     tell("transcribe_clips", i / len(clips))
-                    better = transcribe_clip(audio, k["start"], k["end"], model_name, spoken,
-                                             c.get("whisper_device", "cpu"))
+                    try:
+                        better = transcribe_clip(audio, k["start"], k["end"], model_name,
+                                                 spoken, c.get("whisper_device", "cpu"), hint)
+                    except Cancelled:
+                        raise
+                    except Exception as e:
+                        if model_name != ENGLISH_CAPTION_MODEL:
+                            raise
+                        # the English model could not be loaded: use the general one
+                        log.warning("English speech model unavailable (%s)", str(e)[:120])
+                        model_name = CAPTION_MODELS.get(cfg.get("speed_mode"), "small")
+                        better = transcribe_clip(audio, k["start"], k["end"], model_name,
+                                                 spoken, c.get("whisper_device", "cpu"), hint)
                     if better:
                         clip_words[i] = better
             del audio

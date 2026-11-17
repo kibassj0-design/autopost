@@ -41,3 +41,22 @@ def lines(texts, target):
         size += len(t) + 1
     flush()
     return out
+
+
+def lines_in_context(texts, target):
+    """Like lines(), but each line is translated after the one before it, so a sentence
+    split over two subtitle lines and short replies keep their meaning. One request per
+    line: slower, but this is only the fallback."""
+    out, prev = [], ""
+    for t in texts:
+        t = " ".join(t.split())
+        if not t:
+            out.append("")
+            continue
+        if prev:
+            got = _one(prev + "\n" + t, target).split("\n")
+            out.append(got[-1].strip() if len(got) >= 2 else _one(t, target).strip())
+        else:
+            out.append(_one(t, target).strip())
+        prev = t
+    return out
