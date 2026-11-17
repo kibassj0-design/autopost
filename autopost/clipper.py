@@ -15,7 +15,7 @@ import time
 import wave
 from pathlib import Path
 
-from . import config, llm, video
+from . import config, llm, signals, video
 
 log = logging.getLogger("autopost.clipper")
 
@@ -159,18 +159,23 @@ def _download_progress(d, tell):
 
 
 def _chat_times(work, offset):
-    times = []
+    """Chat replay of a past stream as events (see signals.py), on the clip clock."""
+    events = []
     for f in work.glob("chat.*.json"):
         text = f.read_text(encoding="utf-8", errors="ignore")
-        if "rechat" in f.name:  # Twitch: one JSON list
-            for msg in json.loads(text):
-                times.append(float(msg["content_offset_seconds"]))
-        else:  # YouTube live chat: JSON lines
-            for line in text.splitlines():
-                m = re.search(r'"videoOffsetTimeMsec":\s*"?(\d+)', line)
-                if m:
-                    times.append(int(m.group(1)) / 1000)
-    return sorted(t - offset for t in times if t >= offset)
+        try:
+            if "rechat" in f.name:  # Twitch: one JSON list
+                events += signals.twitch_rechat(json.loads(text))
+            else:  # YouTube live chat: JSON lines
+                for line in text.splitlines():
+                    events += signals.youtube_chat_line(line)
+        except (ValueError, KeyError, TypeError) as e:
+            log.info("Chat replay unreadable (%s)", e)
+    out = [{**e, "t": e["t"] - offset} for e in events if e["t"] >= offset]
+    money = sum(1 for e in out if e["kind"] != "msg")
+    if out:
+        log.info("Chat replay: %d messages, %d donations/subs", len(out), money)
+    return sorted(out, key=lambda e: e["t"])
 
 
 # ---------------------------------------------------------------- signals
@@ -215,7 +220,8 @@ def hype_curve(levels, chat):
 
     score = z(levels)
     if chat:
-        counts = np.bincount([min(int(t), n - 1) for t in chat if t >= 0], minlength=n)
+        counts = np.bincount([min(int(t), n - 1) for t in signals.times(chat) if t >= 0],
+                             minlength=n)
         # People type after the moment happens, so look ~8s ahead of the audio.
         score = score + 1.5 * z(np.convolve(np.roll(counts, -8), np.ones(10) / 10, "same"))
     return np.convolve(score, np.ones(15) / 15, "same")
@@ -419,9 +425,16 @@ short vertical clips (Reels, Shorts, TikTok). The clips are cut and published au
 from the times you give, so nobody fixes them afterwards.
 
 You get the transcript with a start time in seconds in front of every line. Lines can carry \
-signal marks measured on the video itself:
-  🔊 the audio got unusually loud (🔊🔊 / 🔊🔊🔊 = much louder): shouting, hype, a big moment
-  💬 chat suddenly sped up (💬💬 / 💬💬💬 = a flood)
+signal marks measured on the video itself (more of a mark = stronger):
+  🔊 the audio got unusually loud: shouting, screaming, a big reaction
+  💥 a sudden burst of sound across all frequencies: an explosion, a crash, gunfire, a slam
+  🎬 the picture suddenly changed a lot or flashed: action on screen
+  ⚡ fast, loud talking: an argument or a fight between the people in the party/call
+  💬 chat suddenly sped up
+  😂 chat is laughing (KEKW, LUL, 😂, هههه)   🔥 chat is hyped (POG, W, 🔥, كفو)
+  😱 chat is shocked (WTF, ???, 😱, شصار)   ✂️ viewers are asking for a clip of this
+  💰$N donations, bits, gifted subs, Super Chats or a raid around this line (N = dollars); \
+a big one is usually read out or shown on stream and the streamer reacts to it
   🔁 viewers replayed this part the most (YouTube's "most replayed")
 Signals mark the REACTION to something that happened a few seconds earlier, so a clip has \
 to begin before the spike, at the setup (the play starting, the question, the first line of \
@@ -439,6 +452,12 @@ right after it, on a finished sentence.
 - Strong candidates: funny or shocking moments, clutch plays and fails, big reactions, hot \
 takes, a story with a twist, a genuinely useful tip explained in full, an argument or a \
 rage moment, a reveal, an unexpected twist, a wholesome moment with the audience.
+- For streams especially: the streamer's genuine reaction is the heart of a clip (screaming, \
+laughing until they cry, raging, speechless); explosions, car crashes, deaths and wins \
+with a reaction; a fight or heated argument between friends in the party; a big \
+donation, gift or raid and the streamer's reaction to it (start with the alert, end after \
+the reaction); chat exploding with laughs, shock or "clip it". Several different marks on \
+the same lines (e.g. 💥🔊😱 or 💰🔊😂) are the strongest evidence of all.
 - Weak candidates (score them low or leave them out): menus, loading, waiting, reading \
 donations one after another, routine gameplay talk, "let me check something", greetings and \
 goodbyes, sponsor reads, anything that needs earlier context to be understood.
@@ -460,37 +479,6 @@ def _transcript_text(segments, marks=None):
         tag = (marks or {}).get(round(s["start"], 2), "")
         lines.append(f"[{s['start']:.0f}]{(' ' + tag) if tag else ''} {s['text']}")
     return "\n".join(lines)
-
-
-def signal_marks(segments, levels, chat, heatmap):
-    """Per transcript line, emoji marks for how strongly loudness, chat and replays
-    spiked around it (so the AI sees the evidence next to the words)."""
-    import numpy as np
-
-    def z(x):
-        x = np.asarray(x, dtype=np.float32)
-        return (x - x.mean()) / x.std() if len(x) and x.std() > 0 else np.zeros_like(x)
-
-    n = len(levels)
-    curves = {}
-    if n:
-        curves["🔊"] = np.convolve(z(levels), np.ones(3) / 3, "same")
-        if chat:
-            counts = np.bincount([min(int(t), n - 1) for t in chat if t >= 0], minlength=n)
-            curves["💬"] = z(np.convolve(counts, np.ones(10) / 10, "same"))
-        if heatmap is not None and len(heatmap) == n:
-            curves["🔁"] = z(heatmap)
-    marks = {}
-    for seg in segments:
-        a, b = max(0, int(seg["start"]) - 1), min(n, int(seg["end"]) + 9)  # reactions lag
-        tag = ""
-        for sym, curve in curves.items():
-            peak = float(curve[a:b].max()) if b > a else 0.0
-            level = 3 if peak > 3 else 2 if peak > 2.2 else 1 if peak > 1.5 else 0
-            tag += sym * level
-        if tag:
-            marks[round(seg["start"], 2)] = tag
-    return marks
 
 
 def heatmap_curve(meta, duration, offset=0.0):
@@ -546,7 +534,10 @@ def _ask_moments(part, marks, meta, duration, c, cfg, where=""):
 
 RERANK_SYSTEM = """You are the final editor choosing which short clips get posted on \
 TikTok, Reels and Shorts. You get every candidate found in one video, each with its \
-transcript and the signals measured on the video (🔊 loud, 💬 chat spike, 🔁 most replayed).
+transcript, the signals measured on the video (🔊 loud, 💥 explosion/crash sound, 🎬 action \
+on screen, ⚡ heated argument, 💬 chat spike, 😂 laughing chat, 🔥 hyped chat, 😱 shocked \
+chat, ✂️ clip requests, 💰 donations/subs/raids, 🔁 most replayed), what chat typed, and, \
+when available, stills from each candidate's strongest second.
 
 Compare them against each other and give each a final `score` 1-100 on ONE scale for the \
 whole video: how likely is it to stop a stranger's scroll and be watched to the end? \
@@ -569,20 +560,64 @@ RERANK_SCHEMA = {
 }
 
 
-def _rerank(cands, segments, marks, meta, c, cfg):
+def _frames_at(src, seconds):
+    """Small JPEG stills of the source at these seconds, base64."""
+    import base64
+    import tempfile
+    out = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for j, t in enumerate(seconds):
+            shot = Path(tmp) / f"{j}.jpg"
+            try:
+                video._run(["ffmpeg", "-y", "-v", "error", "-ss", f"{max(0, t):.2f}", "-i",
+                            str(src), "-frames:v", "1", "-vf", "scale=384:-2", "-q:v", "6",
+                            str(shot)])
+            except Exception:
+                continue
+            if shot.exists():
+                out.append(base64.standard_b64encode(shot.read_bytes()).decode())
+    return out
+
+
+def _rerank(cands, segments, marks, meta, c, cfg, sig=None, chat=(), src=None):
     """One more look at all candidates together: one scale for the whole video, setup
-    included, weak and duplicate ones out."""
-    blocks = []
+    included, weak and duplicate ones out. With the video file here, the AI also sees a
+    still from the strongest second of each candidate (explosions, crashes, faces)."""
+    import numpy as np
+    blocks, images, shown = [], [], []
     for i, k in enumerate(cands):
         lines = [x for x in segments if x["end"] > k["start"] - 20 and x["start"] < k["end"] + 10]
+        extra = ""
+        if sig is not None:
+            said = sig.chat_sample(chat, k["start"], k["end"])
+            if said:
+                extra += f"Chat during it: {said}\n"
+        if src is not None and sig is not None and len(images) < 16:
+            a, b = int(k["start"]), max(int(k["start"]) + 1, int(k["end"]))
+            curve = sig.curve()
+            peak = a + int(np.argmax(curve[a:b])) if b <= len(curve) and b > a else a
+            got = _frames_at(src, [peak - 1, peak + 2])
+            if got:
+                extra += (f"Stills: images {len(images) + 1}-{len(images) + len(got)} are "
+                          f"from {peak - 1}s and {peak + 2}s, its strongest moment.\n")
+                images += got
         blocks.append(f"## Candidate {i}: {k['start']:.0f}s-{k['end']:.0f}s, first score "
                       f"{k['score']}\nTitle: {k['title']}\nWhat happens: {k['what_happens']}\n"
+                      + extra +
                       f"Transcript (with 20 s before it, in case the setup is there):\n"
                       + _transcript_text(lines, marks))
     brief = (f"Video: {meta['title']!r} by {meta['channel'] or 'unknown'}.\n"
              f"Clips must be {c['min_seconds']}-{c['max_seconds']} seconds long.\n\n"
              + "\n\n".join(blocks))
-    data, who = llm.ask_json(RERANK_SYSTEM, brief, RERANK_SCHEMA, cfg, effort="high")
+    try:
+        data, who = llm.ask_json(RERANK_SYSTEM, brief, RERANK_SCHEMA, cfg, images=images,
+                                 effort="high")
+    except (RuntimeError, ValueError) as e:
+        if not images:
+            raise
+        log.info("Ranking with stills failed (%s); ranking from text", str(e)[:100])
+        data, who = llm.ask_json(RERANK_SYSTEM, brief.replace("Stills:", "(stills not "
+                                 "available)"), RERANK_SCHEMA, cfg, effort="high")
     out = []
     for r in data["clips"]:
         i = r.get("i")
@@ -609,7 +644,7 @@ def _dedupe(cands):
     return kept
 
 
-def pick_with_ai(segments, marks, meta, duration, c, cfg):
+def pick_with_ai(segments, marks, meta, duration, c, cfg, sig=None, chat=(), src=None):
     """Candidates from each part of the video, then one final ranking of all of them."""
     windows = _windows(segments, duration)
     cands, problems = [], []
@@ -633,7 +668,7 @@ def pick_with_ai(segments, marks, meta, duration, c, cfg):
     cands = _dedupe(cands)
     if len(cands) > 1:
         try:
-            cands = _rerank(cands, segments, marks, meta, c, cfg)
+            cands = _rerank(cands, segments, marks, meta, c, cfg, sig, chat, src)
         except (RuntimeError, ValueError, KeyError, TypeError) as e:
             log.info("Final ranking unavailable (%s); keeping the first scores", str(e)[:120])
     return cands
@@ -1175,12 +1210,14 @@ class _heavy:
         PROCESS_LOCK.release()
 
 
-def process(src, meta, chat, cfg, work, tell, queue=True, part=""):
-    """Find the strong moments in `src` and turn each into a finished clip."""
-    return _process(src, meta, chat, cfg, work, tell, queue, part)
+def process(src, meta, chat, cfg, work, tell, queue=True, part="", skip_before=0.0):
+    """Find the strong moments in `src` and turn each into a finished clip.
+    skip_before: the first seconds were already looked at (live chunks overlap); a clip
+    lying entirely inside them is left out."""
+    return _process(src, meta, chat, cfg, work, tell, queue, part, skip_before)
 
 
-def _process(src, meta, chat, cfg, work, tell, queue, part):
+def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
     c = dict(cfg["clipper"])
     # Always as many clips as the video has strong moments: a 30-minute video with
     # two great moments gives two clips, one with ten gives ten.
@@ -1203,16 +1240,14 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
         tell("warning", None, f"low_source: {info['width']}x{info['height']}")
 
     segments, curve, spoken, wav, levels, heat = [], [], None, None, [], None
+    impacts = visual = None
     if info["acodec"]:
         wav = extract_audio(src, work)
         levels = loudness(wav)
         heat = heatmap_curve(meta, len(levels) - 1, meta.get("offset", 0.0))
-        curve = hype_curve(levels, chat)
-        if heat is not None and len(heat) == len(curve):
-            import numpy as np
-            hz = (heat - heat.mean()) / heat.std() if heat.std() > 0 else heat * 0
-            curve = curve + 0.8 * np.convolve(hz, np.ones(15) / 15, "same")
+        if heat is not None:
             log.info("Using YouTube's most-replayed graph as a signal")
+        impacts = signals.audio_impacts(wav, len(levels))
         try:
             tell("transcribe", 0, meta["title"])
             with _heavy(tell, "transcribe"):
@@ -1226,12 +1261,20 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
                         "without captions.", str(e)[:200])
             tell("warning", None, f"no_captions: {str(e)[:200]}")
 
+    n = len(levels) or int(info["duration"]) + 1
+    if not remote:  # the picture is here: sudden action and flashes count too
+        visual = signals.visual_activity(src, n)
+    sig = signals.Signals(n, levels if len(levels) else None, chat, heat, impacts, visual,
+                          segments)
+    curve = sig.curve()
     clips = []
     tell("pick")
     if segments:
-        marks = signal_marks(segments, levels, chat, heat)
+        marks = {round(x["start"], 2): sig.marks(x["start"], x["end"] + 1) for x in segments}
+        marks = {k: v for k, v in marks.items() if v}
         try:
-            clips = pick_with_ai(segments, marks, meta, info["duration"], c, cfg)
+            clips = pick_with_ai(segments, marks, meta, info["duration"], c, cfg,
+                                 sig=sig, chat=chat, src=None if remote else src)
         except (RuntimeError, ValueError, KeyError, TypeError) as e:
             log.warning("AI moment selection unavailable (%s); "
                         "falling back to loudness/chat peaks", str(e)[:160])
@@ -1248,6 +1291,9 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
     # still gives its best moment, so pasting a link never ends empty-handed.
     clips = strong or ([] if c["strict"] else sorted(clips, key=lambda k: -k["score"])[:1])
     clips = fit_clips(clips, segments, info["duration"], c)
+    if skip_before:
+        # the glued-on start of a live chunk: clips wholly inside it were the last chunk's
+        clips = [k for k in clips if k["end"] > skip_before + 5]
     if not clips:
         log.info("No strong moment in %s%s", meta["title"], part)
         return []
@@ -1388,35 +1434,76 @@ def _process(src, meta, chat, cfg, work, tell, queue, part):
 
 # ---------------------------------------------------------------- live streams
 
+LIVE_OVERLAP = 75  # seconds of the previous chunk looked at again
 LIVE_CHUNK = 5 * 60  # seconds of stream per batch of clips: the first clips come ~5 min in
 
 
-def _twitch_chat(channel, started, stamps, stop):
-    """Read-only anonymous Twitch chat: the time of every message, for hype spikes."""
+def _twitch_chat(channel, started, events, stop):
+    """Read-only anonymous Twitch chat: every message with its text, plus bits, subs,
+    gifted subs, raids and tips announced by donation bots (see signals.irc_line)."""
     import socket
     try:
         sock = socket.create_connection(("irc.chat.twitch.tv", 6667), timeout=30)
+        sock.sendall(b"CAP REQ :twitch.tv/tags twitch.tv/commands\r\n")
         sock.sendall(f"NICK justinfan{int(time.time()) % 100000}\r\nJOIN #{channel}\r\n"
                      .encode())
         sock.settimeout(5)
         buf = b""
         while not stop.is_set():
             try:
-                data = sock.recv(4096)
+                data = sock.recv(8192)
             except socket.timeout:
                 continue
             if not data:
                 break
             buf += data
             *lines, buf = buf.split(b"\r\n")
-            for line in lines:
-                if line.startswith(b"PING"):
+            for raw in lines:
+                if raw.startswith(b"PING"):
                     sock.sendall(b"PONG :tmi.twitch.tv\r\n")
-                elif b" PRIVMSG #" in line:
-                    stamps.append(time.time() - started)
+                    continue
+                event = signals.irc_line(raw.decode("utf-8", "replace"), time.time() - started)
+                if event:
+                    events.append(event)
+                    if event["kind"] != "msg":
+                        log.info("Twitch: %s ($%.0f)", event["text"][:80], event["usd"])
         sock.close()
     except OSError as e:
         log.info("Twitch chat not available (%s)", e)
+
+
+def _youtube_live_chat(url, work, started, events, stop):
+    """YouTube live chat while the stream is on: yt-dlp writes it as it comes; new
+    lines are read as they appear (messages, Super Chats, memberships)."""
+    import sys
+    out = work / "ytchat"
+    out.mkdir(exist_ok=True)
+    proc = subprocess.Popen([sys.executable, "-m", "yt_dlp", "--skip-download", "--write-subs",
+                             "--sub-langs", "live_chat", "--no-warnings", "-q",
+                             "-o", str(out / "chat.%(ext)s"), url],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    seen = 0
+    try:
+        while not stop.is_set():
+            files = sorted(out.glob("chat*.json*"))
+            if files:
+                with open(files[0], encoding="utf-8", errors="ignore") as f:
+                    f.seek(seen)
+                    chunk = f.read()
+                complete = chunk.rsplit("\n", 1)[0] if "\n" in chunk else ""
+                seen += len(complete.encode("utf-8")) + (1 if complete else 0)
+                for line in complete.splitlines():
+                    for e in signals.youtube_chat_line(line, started):
+                        events.append(e)
+                        if e["kind"] != "msg":
+                            log.info("YouTube: %s ($%.0f)", e["text"][:80], e["usd"])
+            if proc.poll() is not None and not files:
+                log.info("YouTube live chat not available")
+                return
+            stop.wait(5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
 
 
 def run_live(info, cfg, work, tell, stop, queue=True, cancel=None):
@@ -1468,28 +1555,59 @@ def run_live(info, cfg, work, tell, stop, queue=True, cancel=None):
 
     threading.Thread(target=end_recording, daemon=True).start()
 
-    stamps = []
+    events = []
     host = (info.get("extractor_key") or "").lower()
     if "twitch" in host and info.get("uploader_id"):
         threading.Thread(target=_twitch_chat, args=(info["uploader_id"].lower(), started,
-                                                    stamps, stop), daemon=True).start()
+                                                    events, stop), daemon=True).start()
+    elif "youtube" in host and meta["url"]:
+        threading.Thread(target=_youtube_live_chat, args=(meta["url"], work, started,
+                                                          events, stop), daemon=True).start()
 
     finished, done_chunks = [], 0
+    previous = {}  # the last chunk, kept so a moment on the border is not cut in two
 
     def handle(path, index):
         offset = index * LIVE_CHUNK
-        chat = [t - offset for t in stamps if offset <= t < offset + LIVE_CHUNK]
+        source, lead = path, 0.0
+        prev = previous.get("path")
+        if prev is not None and prev.exists():
+            # Glue the end of the previous chunk in front: a moment that started just
+            # before the cut is seen whole. Clips that lie entirely inside that glued
+            # part were already the previous chunk's to take.
+            joined = rec / f"joined{index:04d}.ts"
+            try:
+                tail = rec / f"tail{index:04d}.ts"
+                video._run(["ffmpeg", "-y", "-v", "error", "-sseof", f"-{LIVE_OVERLAP}",
+                            "-i", str(prev), "-c", "copy", str(tail)])
+                listing = rec / f"join{index:04d}.txt"
+                listing.write_text(f"file '{tail.as_posix()}'\nfile '{path.as_posix()}'\n")
+                video._run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                            "-i", str(listing), "-c", "copy", str(joined)])
+                listing.unlink(missing_ok=True)
+                lead = video.probe(tail)["duration"]
+                tail.unlink(missing_ok=True)
+                source = joined
+            except Exception as e:
+                log.info("Could not join live chunks (%s); using the chunk alone", e)
+                lead = 0.0
+        chat = [{**e, "t": e["t"] - offset + lead} for e in events
+                if offset - lead <= e["t"] < offset + LIVE_CHUNK]
         try:
-            finished.extend(process(path, meta, chat, cfg, work, tell, queue,
-                                    part=f" #{index + 1}"))
+            finished.extend(process(source, meta, chat, cfg, work, tell, queue,
+                                    part=f" #{index + 1}", skip_before=lead))
         except Cancelled:
             raise
         except Exception as e:
-            if path.exists() and video.probe(path)["duration"] < cfg["clipper"]["min_seconds"]:
+            if source.exists() and video.probe(source)["duration"] < cfg["clipper"]["min_seconds"]:
                 log.info("Live chunk %d is too short for a clip", index + 1)
             else:
                 log.error("Live chunk %d: %s", index + 1, e)
-        path.unlink(missing_ok=True)
+        if source != path:
+            source.unlink(missing_ok=True)
+        if prev is not None:
+            prev.unlink(missing_ok=True)
+        previous["path"] = path
 
     while True:
         if cancel.is_set():
@@ -1513,6 +1631,8 @@ def run_live(info, cfg, work, tell, stop, queue=True, cancel=None):
             tell("live", None, f"stopping · {len(finished)} clips")
         time.sleep(1 if stop.is_set() else 5)
     errlog.close()
+    if previous.get("path") is not None:
+        previous["path"].unlink(missing_ok=True)
     if recorder.returncode not in (0, 255, None) and not finished and done_chunks == 0:
         err = (work / "recorder.log").read_text(errors="replace")[-300:]
         raise RuntimeError(f"Recording the stream failed: {err}")
