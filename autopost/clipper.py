@@ -2073,11 +2073,21 @@ def run_live(info, cfg, work, tell, stop, queue=True, cancel=None, back=None):
     cancel = cancel or threading.Event()
     _ctx.cancel = cancel
     max_height = 1440 if str(cfg.get("resolution")) == "1440" else 1080
+    # One stream with picture and sound when there is one (Twitch, most YouTube lives);
+    # otherwise picture and sound as two streams, recorded together.
+    h = max_height
     with yt_dlp.YoutubeDL(_ydl_opts(work, tell, **{
-            "format": f"best[height<={max_height}]/best"})) as ydl:
+            "format": f"best[height<={h}][vcodec!=none][acodec!=none]/"
+                      f"bv*[height<={h}]+ba/bv*+ba/best",
+            # codecs the recording keeps without converting
+            "format_sort": [f"res:{h}", "vcodec:h264", "acodec:aac"]})) as ydl:
         chosen = ydl.process_ie_result(info, download=False)
-    stream = chosen.get("url") or info.get("url")
-    if not stream:
+    parts = chosen.get("requested_formats") or [chosen]
+    inputs = [(f.get("url"), f.get("http_headers") or chosen.get("http_headers") or {})
+              for f in parts if f.get("url")]
+    if not inputs and info.get("url"):
+        inputs = [(info["url"], {})]
+    if not inputs:
         raise RuntimeError("Could not open the live stream")
     title = info.get("title") or info.get("uploader") or "live"
     meta = {"title": title, "channel": info.get("uploader") or info.get("channel") or "",
@@ -2088,11 +2098,17 @@ def run_live(info, cfg, work, tell, stop, queue=True, cancel=None, back=None):
     rec = work / "live"
     rec.mkdir()
     started = time.time()
-    headers = "".join(f"{k}: {v}\r\n" for k, v in (chosen.get("http_headers") or {}).items())
     cmd = ["ffmpeg", "-v", "error", "-y"]
-    if headers:
-        cmd += ["-headers", headers]
-    cmd += ["-i", stream, "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy", "-f", "segment",
+    for url, hdr in inputs:
+        headers = "".join(f"{k}: {v}\r\n" for k, v in hdr.items())
+        if headers:
+            cmd += ["-headers", headers]
+        cmd += ["-i", url]
+    if len(inputs) > 1:  # picture from the first stream, sound from the second
+        cmd += ["-map", "0:v:0", "-map", "1:a:0"]
+    else:
+        cmd += ["-map", "0:v:0?", "-map", "0:a:0?"]
+    cmd += ["-c", "copy", "-f", "segment",
             "-segment_time", str(LIVE_CHUNK), "-reset_timestamps", "1",
             str(rec / "chunk%04d.ts")]
     errlog = open(work / "recorder.log", "wb")  # a file, so a chatty ffmpeg can't stall
