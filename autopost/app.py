@@ -312,6 +312,27 @@ class App:
             raise RuntimeError(f"تعذّر التحديث: {e}")
         threading.Timer(1.5, lambda: os._exit(updater.RESTART_CODE)).start()
 
+    def update_when_free(self, limit=15 * 60):
+        """Update as soon as the post being published is done (at most `limit` seconds
+        later); no new post starts meanwhile."""
+        if self.update.get("pending"):
+            return
+        self.update["pending"] = True
+        self.publisher.hold = True
+
+        def wait():
+            began = time.time()
+            while self.publisher.current is not None and time.time() - began < limit:
+                time.sleep(3)
+            try:
+                self.apply_update()
+            except Exception as e:
+                log.warning("Update failed: %s", e)
+                self.update["pending"] = False
+                self.publisher.hold = False
+
+        threading.Thread(target=wait, daemon=True).start()
+
     def _update_loop(self):
         time.sleep(20)  # let the app settle first
         while True:
@@ -467,6 +488,7 @@ class App:
             "enabled": self.cfg["platforms"],
             "ai": llm.providers(self.cfg),
             "ai_status": llm.status(self.cfg),
+            "tiktok_inbox_wait": tiktok.inbox_wait() if config.connected("tiktok") else 0,
             "encoder": video.encoder()[0],
             "schedule": self.schedule_list(),
             "update": {k: v for k, v in self.update.items()},
@@ -774,7 +796,9 @@ def make_handler(app):
                 return app.check_update()
             elif path == "/api/update/apply":
                 if app.publisher.current is not None:
-                    raise ValueError("يُنشر مقطع الآن؛ حدّث بعد دقيقة حين ينتهي.")
+                    # A post is going out: hold new ones, and update once it is done.
+                    app.update_when_free()
+                    return {"pending": True}
                 app.apply_update()  # running links resume by themselves after the restart
                 return {"restarting": True}
             elif path == "/api/publisher/cancel":
@@ -859,6 +883,13 @@ def make_handler(app):
                 return {"name": notify.telegram_find_chat()}
             elif path == "/api/ai/probe":
                 return {"status": llm.probe(app.cfg)}
+            elif path == "/api/tiktok/inbox-cleared":
+                tiktok.inbox_cleared()
+                db = store.connect()
+                db.execute("UPDATE retries SET next_at=? WHERE post_id IN (SELECT id FROM posts "
+                           "WHERE platform='tiktok')", (time.time(),))
+                db.commit()
+                db.close()
             elif path == "/api/insights":
                 db = store.connect()
                 try:

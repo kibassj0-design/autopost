@@ -35,6 +35,7 @@ class Publisher:
         self._db = None
         self.lock = threading.Lock()
         self.retries = []         # failed posts to send again, one platform each
+        self.hold = False         # an update is waiting: start no new post
         self.scores = {}          # clip name -> virality score (filled by the predictor)
 
     def retry(self, post_id):
@@ -116,18 +117,21 @@ class Publisher:
     def _plan_retries(self, video_id):
         """A platform that refused a clip gets it again by itself, a few times, spaced out:
         most failures (a busy server, a slow video processing, a limit) pass."""
-        for row in self._db.execute("SELECT id FROM posts WHERE video_id=? AND error IS NOT "
-                                    "NULL", (video_id,)).fetchall():
+        from .platforms import tiktok
+        for row in self._db.execute("SELECT id, platform FROM posts WHERE video_id=? AND error "
+                                    "IS NOT NULL", (video_id,)).fetchall():
             have = self._db.execute("SELECT attempts FROM retries WHERE post_id=?",
                                     (row["id"],)).fetchone()
             attempts = have["attempts"] if have else 0
             if attempts >= len(self.RETRY_AFTER):
                 self._db.execute("DELETE FROM retries WHERE post_id=?", (row["id"],))
                 continue
+            delay = self.RETRY_AFTER[attempts]
+            if row["platform"] == "tiktok":
+                delay = max(delay, tiktok.inbox_wait())  # a full TikTok inbox: after it empties
             self._db.execute("INSERT OR REPLACE INTO retries VALUES(?,?,?)",
-                             (row["id"], attempts, time.time() + self.RETRY_AFTER[attempts]))
-            log.info("Post %d failed; trying it again in %d min", row["id"],
-                     self.RETRY_AFTER[attempts] // 60)
+                             (row["id"], attempts, time.time() + delay))
+            log.info("Post %d failed; trying it again in %d min", row["id"], delay // 60)
         self._db.commit()
 
     def _due_retry(self):
@@ -268,6 +272,8 @@ class Publisher:
                 "SELECT MAX(p.published_at) t FROM posts p JOIN videos v ON v.id = p.video_id"
                 " WHERE p.error IS NULL AND v.parent_id IS NULL").fetchone()
             self.last_post = row["t"] or 0.0
+        if self.hold:
+            return  # the tool is about to restart for an update
         cfg, m = self.cfg, self.cfg["momentum"]
         accounts = any(config.connected(p) for p in cfg["platforms"])
 

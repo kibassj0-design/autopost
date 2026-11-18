@@ -926,6 +926,16 @@ function renderQueue(s) {
     status = wait > 0 ? "المنشور التالي " + fromNow(p.next_post_at, p.now) + "." : "المنشور التالي خلال لحظات.";
   }
   $("#pubstatus").textContent = status;
+  const tw = s.tiktok_inbox_wait || 0;
+  let tn = $("#tt-inbox");
+  if (tw > 0) {
+    if (!tn) {
+      tn = el("div", { id: "tt-inbox", class: "note warn", style: "margin:-4px 0 12px" }, [
+        el("span", { text: "صندوق الوارد في تيك توك ممتلئ (تيك توك يسمح بحوالي 5 مقاطع منتظرة فقط). افتح تيك توك ← صندوق الوارد، انشر المقاطع أو احذفها، ثم اضغط: " }),
+        el("button", { class: "btn sm", text: "نشرتها، أرسل الباقي", onclick: () => act("/api/tiktok/inbox-cleared", {}, "سيُرسل الباقي إلى تيك توك") })]);
+      $("#pubstatus").after(tn);
+    }
+  } else if (tn) tn.remove();
   keyed($("#queue"), s.queue, c => c.name, c => JSON.stringify([c.title, c.seconds, c.viral, c.cover]),
     c => el("div", { class: "item" }, [
       el("div", { class: "top" }, [
@@ -1479,6 +1489,7 @@ function renderUpdate(u) {
   $("#upd-now").hidden = !u.available || u.busy;
   $("#upd-now2").hidden = !u.available || u.busy;
   let st = u.busy ? "يحدّث الآن، ستُعاد الأداة بعد لحظات…"
+    : u.pending ? "سيتحدث فور انتهاء النشر الجاري…"
     : u.error ? "تعذّر التحقق: " + u.error
     : u.available ? "يوجد إصدار جديد."
     : u.checked ? "لديك أحدث إصدار." : "";
@@ -1489,8 +1500,9 @@ async function doUpdate() {
   if (!confirm("تحديث الأداة الآن؟ ستُغلق وتُفتح من جديد خلال ثوانٍ، ومفاتيحك وإعداداتك تبقى كما هي." +
     (busy ? "\n\nالشغل الجاري يكمل وحده بعد التحديث من حيث توقف (والبث المباشر يقص أيضا الدقائق التي فاتت)." : ""))) return;
   try {
-    await api("/api/update/apply", {});
-    toast("يحدّث… ستعود الأداة خلال ثوانٍ", "ok");
+    const r = await api("/api/update/apply", {});
+    toast(r && r.pending ? "يُنشر مقطع الآن: الأداة ستتحدث وحدها فور انتهائه (ولن تبدأ نشرا جديدا قبل ذلك)."
+                         : "يحدّث… ستعود الأداة خلال ثوانٍ", "ok");
     const wait = setInterval(async () => {   // reload once the new version answers
       try { await api("/api/state"); clearInterval(wait); location.reload(); } catch (e) {}
     }, 2500);

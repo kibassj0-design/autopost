@@ -138,10 +138,41 @@ def publish(path, text, cfg):
     raise PlatformError("TikTok was still processing the video after 5 minutes")
 
 
+SINGLE_MAX = 64 * 1024 * 1024  # TikTok takes a file up to this size in one piece
+
+
 def _chunks(path):
+    """TikTok's rule: one piece means chunk_size == video_size; otherwise 5-64 MB pieces,
+    the last one carrying the remainder. A clip is almost always under 64 MB: one piece."""
     size = os.path.getsize(path)
-    chunk = size if size < CHUNK else CHUNK
-    return size, chunk, max(1, size // chunk)  # the last chunk carries the remainder
+    if size <= SINGLE_MAX:
+        return size, size, 1
+    return size, CHUNK, size // CHUNK
+
+
+INBOX_LIMIT = 5  # TikTok keeps at most about this many unposted videos in the inbox
+
+
+def _inbox_paused():
+    """Seconds until TikTok's inbox can take another video, or 0."""
+    tok = config.get_tokens().get("tiktok", {})
+    until = float(tok.get("inbox_blocked_until") or 0)
+    if until > time.time():
+        return until - time.time()
+    sent = [t for t in tok.get("inbox_sent", []) if time.time() - t < 24 * 3600]
+    if len(sent) >= INBOX_LIMIT:
+        return min(sent) + 24 * 3600 - time.time()
+    return 0
+
+
+def _inbox_full_error(wait):
+    from . import PlatformError
+    hours = max(1, round(wait / 3600))
+    return PlatformError(
+        "TikTok: صندوق الوارد في تيك توك ممتلئ بمقاطع لم تُنشر بعد (تيك توك يسمح بحوالي 5 "
+        "فقط). افتح تيك توك ← صندوق الوارد (Inbox) ← انشر المقاطع المنتظرة أو احذفها. "
+        f"الأداة ترسل لتيك توك من جديد بعد حوالي {hours} ساعة، أو فورا بعد أن تضغط "
+        "«تيك توك: نشرتها» في الأداة.")
 
 
 def _send(path, url, size, chunk, count):
@@ -173,11 +204,23 @@ def _upload_draft(path, text, cfg):
     """Send the video to the creator's TikTok inbox. They post it from the app with
     one tap, publicly, which needs no app audit. The caption goes in the app's notes."""
     from . import PlatformError
+    wait = _inbox_paused()
+    if wait:  # don't ask: TikTok would answer spam_risk_too_many_pending_share
+        raise _inbox_full_error(wait)
     size, chunk, count = _chunks(path)
-    init = _call("/post/publish/inbox/video/init/", {
-        "source_info": {"source": "FILE_UPLOAD", "video_size": size,
-                        "chunk_size": chunk, "total_chunk_count": count},
-    }, "TikTok draft init")
+    try:
+        init = _call("/post/publish/inbox/video/init/", {
+            "source_info": {"source": "FILE_UPLOAD", "video_size": size,
+                            "chunk_size": chunk, "total_chunk_count": count},
+        }, "TikTok draft init")
+    except PlatformError as e:
+        if "pending_share" in str(e) or "spam_risk" in str(e):
+            config.save_tokens("tiktok", {"inbox_blocked_until": time.time() + 12 * 3600})
+            raise _inbox_full_error(12 * 3600)
+        raise
+    tok = config.get_tokens().get("tiktok", {})
+    sent = [t for t in tok.get("inbox_sent", []) if time.time() - t < 24 * 3600]
+    config.save_tokens("tiktok", {"inbox_sent": sent + [time.time()]})
     _send(path, init["upload_url"], size, chunk, count)
     for _ in range(60):
         st = _call("/post/publish/status/fetch/", {"publish_id": init["publish_id"]},
@@ -192,3 +235,12 @@ def _upload_draft(path, text, cfg):
         time.sleep(5)
     raise PlatformError("TikTok was still processing the video after 5 minutes")
 
+
+
+def inbox_cleared():
+    """The user posted (or deleted) the videos waiting in their TikTok inbox."""
+    config.save_tokens("tiktok", {"inbox_blocked_until": 0, "inbox_sent": []})
+
+
+def inbox_wait():
+    return _inbox_paused()
