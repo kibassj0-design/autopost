@@ -16,14 +16,8 @@ log = logging.getLogger("autopost.ai")
 
 CLAUDE_MODEL = "claude-opus-5-5"
 GEMINI_API = "https://generativelanguage.googleapis.com/v1beta"
-# Keys that start with "AQ." are Vertex AI (express mode) keys: same Gemini models, served
-# from Google Cloud's address instead of AI Studio's.
-VERTEX_API = "https://aiplatform.googleapis.com/v1/publishers/google/models"
-VERTEX_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
-
-
-def _vertex_key():
-    return os.environ.get("GEMINI_API_KEY", "").strip().startswith("AQ.")
+# Google's own aliases for its newest Flash models, used when the model list can't be read.
+GEMINI_ALIASES = ["gemini-flash-latest", "gemini-flash-lite-latest"]
 
 
 class LLMError(RuntimeError):
@@ -173,8 +167,6 @@ def gemini_models(cfg):
     """Text models this key can call, best first: newest Flash, then newest Flash-Lite
     (smaller, but with a much larger free daily quota). A model set in config goes first."""
     global _gemini_models
-    if _gemini_models is None and _vertex_key():
-        _gemini_models = list(VERTEX_MODELS)  # express mode has no model list to read
     if _gemini_models is None:
         r = requests.get(f"{GEMINI_API}/models", params={"pageSize": 1000}, timeout=30,
                          headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]})
@@ -183,9 +175,8 @@ def gemini_models(cfg):
             if "API key not valid" in r.text or "API_KEY_INVALID" in r.text:
                 _dead.add("gemini")  # use the other AI keys meanwhile
                 shape = ("" if key.startswith(("AIza", "AQ.")) else
-                         f" ملاحظة: المحفوظ الآن طوله {len(key)} حرفا ولا يبدأ بـ AIza، ومفتاح "
-                         "Gemini يبدأ بـ AIza وطوله 39 حرفا، فالأغلب أن شيئا آخر لُصق في "
-                         "هذه الخانة.")
+                         f" ملاحظة: المحفوظ الآن يبدأ بغير AIza أو AQ. ، ومفاتيح Gemini تبدأ "
+                         "بأحدهما، فالأغلب أن شيئا آخر لُصق في هذه الخانة.")
                 raise LLMError(
                     "مفتاح Gemini غير صالح: Google لا تعرفه (ربما حُذف، أو نُسخ ناقصا، أو "
                     "لُصق مفتاح آخر مكانه). الحل: aistudio.google.com/apikey ← Create API key "
@@ -238,8 +229,7 @@ def _gemini(system, text, schema, cfg, images, effort, max_tokens):
     for model in gemini_models(cfg):
         if model in _gemini_spent:
             continue
-        url = (f"{VERTEX_API}/{model}:generateContent" if _vertex_key()
-               else f"{GEMINI_API}/models/{model}:generateContent")
+        url = f"{GEMINI_API}/models/{model}:generateContent"
         for attempt in range(2):
             try:
                 r = requests.post(url, json=body, headers=headers, timeout=600)
@@ -272,13 +262,6 @@ def _gemini(system, text, schema, cfg, images, effort, max_tokens):
             except (KeyError, IndexError, ValueError) as e:
                 problems.append(f"{model}: unusable answer ({type(e).__name__})")
                 break
-    if _vertex_key() and any(re.search(r"HTTP (400|401|403) .*(API key|API_KEY|PERMISSION|"
-                                       r"UNAUTHENTICATED|SERVICE_DISABLED)", p) for p in problems):
-        _dead.add("gemini")
-        raise LLMError(
-            "مفتاح Gemini الذي يبدأ بـ AQ. هو مفتاح Vertex AI، وGoogle رفضته (ربما لم تُفعَّل "
-            "خدمة Vertex AI في مشروعه، أو حُذف). الأسهل: أنشئ مفتاحا مجانيا يبدأ بـ AIza من "
-            "aistudio.google.com/apikey والصقه بدلا منه. (" + problems[0][:160] + ")")
     raise LLMError("Gemini could not answer: " + (" | ".join(problems)[:500] or
                                                    "the free quota of every model is used up"))
 

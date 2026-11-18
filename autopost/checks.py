@@ -41,11 +41,11 @@ def run(cfg):
         if name == "claude":
             results.append(("AI model (Claude)", True, "key set"))
         elif name == "gemini":
-            # A real (tiny) request: express-mode keys have no model list to test with.
+            # A real (tiny) request, so a key that lists models but can't answer shows up.
             _attempt(results, "AI model (Gemini)", lambda: llm._gemini(
                 "Answer with the JSON object {\"ok\": true}.", "ok",
                 {"type": "object", "properties": {"ok": {"type": "boolean"}}}, cfg, (),
-                "low", 50) if llm._vertex_key() else llm.gemini_models(cfg))
+                "low", 50))
         else:
             _attempt(results, f"AI model ({name})",
                      lambda name=name: llm.compat_models(name, cfg))
