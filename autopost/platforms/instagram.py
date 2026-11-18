@@ -262,6 +262,7 @@ def _container(token, user, text, **source):
     from . import check
     return check(requests.post(f"{_base()}/{user}/media", timeout=60, data={
         "media_type": "REELS", "caption": text["caption"], "share_to_feed": "true",
+        "thumb_offset": "300",  # the clip's first second is its designed cover
         "access_token": token, **source}), "Instagram container").json()
 
 

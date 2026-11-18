@@ -103,6 +103,7 @@ def publish(path, text, cfg):
     try:
         init = _call("/post/publish/video/init/", {
             "post_info": {"title": text["caption"], "privacy_level": privacy,
+                          "video_cover_timestamp_ms": 300,  # the designed cover
                           "disable_comment": bool(creator.get("comment_disabled")),
                           "disable_duet": bool(creator.get("duet_disabled")),
                           "disable_stitch": bool(creator.get("stitch_disabled"))},

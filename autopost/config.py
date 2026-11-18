@@ -45,6 +45,8 @@ DEFAULTS = {
         "layout": "auto",
         "title_overlay": True,  # a short hook headline at the top in the first seconds
         "jump_cuts": True,      # cut dead air (no speech, near silence) out of clips
+        "cover": True,          # a designed cover as the first second of every clip
+        "cover_ms": 1000,       # how long it shows
         "max_height": 1080,
     },
     "virality": {

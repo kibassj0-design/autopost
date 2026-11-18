@@ -1072,6 +1072,78 @@ def add_title(ass, text, size, font, exists):
     return True
 
 
+def cover_time(src, start, end, peak=None):
+    """The best second of the clip for its cover: near its strongest moment, sharp, and
+    with a big clear face when there is one (an expression sells a cover)."""
+    import cv2
+    lo, hi = start + 0.8, max(start + 1.0, end - 0.8)
+    centre = peak if peak is not None and lo <= peak <= hi else (lo + hi) / 2
+    times = sorted({min(max(centre + d, lo), hi) for d in (-2, -1, -0.5, 0, 0.5, 1, 2)})
+    cap = cv2.VideoCapture(str(src))
+    best, best_score = centre, -1.0
+    for t in times:
+        cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        small = cv2.resize(frame, (480, int(480 * frame.shape[0] / frame.shape[1])))
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        sharp = min(cv2.Laplacian(gray, cv2.CV_64F).var() / 400, 1.5)
+        light = 1 - abs(gray.mean() - 120) / 120  # not black, not blown out
+        try:
+            faces = _faces(frame, small=True)
+            face = max((f[2] * f[3] for f in faces), default=0) / (frame.shape[0] * frame.shape[1])
+        except Exception:
+            face = 0
+        score = sharp + 0.6 * light + min(face * 40, 1.5)
+        if score > best_score:
+            best, best_score = t, score
+    cap.release()
+    return best
+
+
+def make_cover(src, t, chain, size, texts, font, out_png):
+    """A cover picture: the chosen frame in the clip's own framing, a little punchier,
+    darkened behind a big two-language headline."""
+    tw, th = size
+    vertical = th > tw
+    ar, en = (texts + ["", ""])[:2]
+    ass = out_png.with_suffix(".cover.ass")
+    lines = _ass_header(font, 80, 100, tw, th, 4, 2)
+    fs_ar, fs_en = (118, 64) if vertical else (92, 52)
+    i = lines.index("[Events]") - 1
+    lines.insert(i, f"Style: CovAr,{font},{fs_ar},&H00FFFFFF,&H00FFFFFF,&H00000000,"
+                    f"&H99000000,-1,0,0,0,100,100,0,0,1,{max(6, fs_ar // 12)},5,5,70,70,0,1")
+    lines.insert(i + 1, f"Style: CovEn,{font},{fs_en},&H0000E5FF,&H0000E5FF,&H00000000,"
+                        f"&H99000000,-1,0,0,0,100,100,0,0,1,{max(4, fs_en // 12)},4,5,70,70,0,1")
+    y = int(th * (0.42 if vertical else 0.45))
+    if ar:
+        text = RLM + _clean(ar) + RLM
+        lines.append(f"Dialogue: 0,0:00:00.00,0:00:05.00,CovAr,,0,0,0,,{{\\pos({tw // 2},{y})}}{text}")
+    if en:
+        y2 = y + (fs_ar if ar else 0) + 40
+        lines.append(f"Dialogue: 0,0:00:00.00,0:00:05.00,CovEn,,0,0,0,,{{\\pos({tw // 2},{y2})}}"
+                     + _clean(en))
+    ass.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    from . import assets
+    fonts = assets.fonts_dir()
+    sub = f"ass={ass.name}"
+    if fonts is not None:
+        try:
+            sub += ":fontsdir=" + os.path.relpath(fonts, out_png.parent).replace("\\", "/")
+        except ValueError:
+            pass
+    graph = (chain + ",eq=contrast=1.08:saturation=1.25:brightness=-0.06,vignette=PI/4,"
+             + sub + ",setsar=1[v]")
+    code, err = _ffmpeg(["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.3f}", "-i",
+                         str(Path(src).resolve()), "-filter_complex", graph, "-map", "[v]",
+                         "-frames:v", "1", out_png.name], out_png.parent)
+    ass.unlink(missing_ok=True)
+    if code != 0 or not out_png.exists():
+        raise RuntimeError(err[-300:])
+    return out_png
+
+
 def _ass_time(t):
     t = max(t, 0)
     return f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{t % 60:05.2f}"
@@ -1247,6 +1319,18 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
         chain = video.fit_filter(meta, tw, th)
         if not matches:
             layout = "blurred fill"
+    cover = None
+    cover_s = max(0.0, c.get("cover_ms", 1000) / 1000) if c.get("cover", True) else 0
+    if cover_s:
+        try:
+            texts = [clip.get("cover_ar") or "", clip.get("cover_en") or ""]
+            if any(texts):
+                t = cover_time(src, start, end, clip.get("peak"))
+                cover = make_cover(src, t, chain, (tw, th), texts, c["caption_font"],
+                                   out.with_suffix(".cover.png"))
+        except Exception as e:  # a nicety: never lose a clip over it
+            log.info("Cover skipped (%s)", str(e)[:160])
+            cover = None
     keep = clip.get("keep") if c.get("jump_cuts", True) else None
     cut_graph, length = "", end - start
     if keep and len(keep) > 1:
@@ -1287,14 +1371,23 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
                 chain += f",ass={ass.name}"
         else:
             chain += f",ass={ass.name}"
-    chain += ",setsar=1[v]"
-
     cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.3f}", "-i", str(Path(src).resolve())]
+    if not meta["acodec"]:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+    if cover is not None:
+        # The cover is the first second of the clip: platforms show the first frame as
+        # the cover (Shorts always; Instagram and TikTok are told to use it too).
+        k = 1 if meta["acodec"] else 2
+        cmd += ["-loop", "1", "-t", f"{cover_s:.2f}", "-i", cover.name]
+        chain += (f",setsar=1[vm];[{k}:v]scale={tw}:{th},setsar=1,format=yuva420p,"
+                  f"fade=t=out:st={max(0, cover_s - 0.15):.2f}:d=0.15:alpha=1[cov];"
+                  f"[vm][cov]overlay=0:0:eof_action=pass[v]")
+    else:
+        chain += ",setsar=1[v]"
     if meta["acodec"]:
         audio_in = "[ac]" if cut_graph else "[0:a]"
         graph = cut_graph + chain + f";{audio_in}loudnorm=I=-14:TP=-1.5:LRA=11[a]"
     else:
-        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
         graph = cut_graph + chain + ";[1:a]anull[a]"
     cmd += ["-t", f"{length:.3f}", "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
             "-r", str(video.out_fps(meta, fps)), *video.encoder()[1],
@@ -1302,6 +1395,8 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
             "-movflags", "+faststart", out.name]
     # Run inside the output folder so the subtitle filter needs no path escaping.
     code, err = _ffmpeg(cmd, out.parent)
+    if cover is not None and code == 0:
+        layout += ", cover"
     enc = video.encoder()
     if code != 0 and enc[0] != "libx264":
         # The graphics card refused this one (driver, size, format): use the processor
@@ -1313,7 +1408,11 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
         cmd[i:i + len(enc[1])] = video._CPU[1]
         code, err = _ffmpeg(cmd, out.parent)
     if code != 0:
+        if cover is not None:
+            cover.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg failed: {err[-600:]}")
+    if cover is not None:
+        cover.unlink(missing_ok=True)
     return layout
 
 
@@ -1593,6 +1692,10 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
     if skip_before:
         # the glued-on start of a live chunk: clips wholly inside it were the last chunk's
         clips = [k for k in clips if k["end"] > skip_before + 5]
+    for k in clips:  # its strongest second: where the cover frame is looked for
+        a, b = int(k["start"]), min(len(curve), int(k["end"]))
+        if b > a + 1:
+            k["peak"] = float(a + int(curve[a:b].argmax()))
     if not clips:
         log.info("No strong moment in %s%s", meta["title"], part)
         return []
@@ -1724,6 +1827,8 @@ def _finish(src, meta, cfg, work, tell, queue, part, c, info, remote, segments, 
             file, offset = section
             c_src, c_info = file, video.probe(file)
             c_clip = {**clip, "start": clip["start"] - offset, "end": clip["end"] - offset}
+            if clip.get("peak") is not None:
+                c_clip["peak"] = clip["peak"] - offset
             if clip.get("keep"):
                 c_clip["keep"] = [(a - offset, b - offset) for a, b in clip["keep"]]
             c_caps = _shift(clip_caps[n - 1], offset)
@@ -1733,6 +1838,9 @@ def _finish(src, meta, cfg, work, tell, queue, part, c, info, remote, segments, 
             c_src, c_info, c_clip, c_caps = src, info, clip, clip_caps[n - 1]
         lang = caption_target(spoken, c["captions_language"]) if spoken else "ar"
         c_clip["overlay"] = clip.get("overlay_ar" if lang == "ar" else "overlay_en") or ""
+        # cover headline: Arabic big, English under it (the clip title when no headline)
+        c_clip["cover_ar"] = clip.get("overlay_ar") or (clip["title"] if spoken == "ar" else "")
+        c_clip["cover_en"] = clip.get("overlay_en") or (clip["title"] if spoken == "en" else "")
         with _heavy(tell, "render"):
             layout = render(c_src, c_info, c_clip, c_caps, out, c, cfg["orientation"],
                             cfg["fps"])
