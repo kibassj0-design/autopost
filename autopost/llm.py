@@ -169,6 +169,22 @@ def gemini_models(cfg):
         r = requests.get(f"{GEMINI_API}/models", params={"pageSize": 1000}, timeout=30,
                          headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]})
         if r.status_code >= 400:
+            key = os.environ.get("GEMINI_API_KEY", "").strip()
+            if "API key not valid" in r.text or "API_KEY_INVALID" in r.text:
+                _dead.add("gemini")  # use the other AI keys meanwhile
+                shape = ("" if key.startswith("AIza") and len(key) == 39 else
+                         f" ملاحظة: المحفوظ الآن طوله {len(key)} حرفا ولا يبدأ بـ AIza، ومفتاح "
+                         "Gemini يبدأ بـ AIza وطوله 39 حرفا، فالأغلب أن شيئا آخر لُصق في "
+                         "هذه الخانة.")
+                raise LLMError(
+                    "مفتاح Gemini غير صالح: Google لا تعرفه (ربما حُذف، أو نُسخ ناقصا، أو "
+                    "لُصق مفتاح آخر مكانه). الحل: aistudio.google.com/apikey ← Create API key "
+                    "← انسخه كاملا والصقه في خانة Gemini ← حفظ." + shape)
+            if "SERVICE_DISABLED" in r.text or "has not been used" in r.text:
+                _dead.add("gemini")
+                raise LLMError(
+                    "هذا مفتاح Google Cloud لم تُفعَّل فيه خدمة Gemini. الأسهل: أنشئ مفتاحا من "
+                    "aistudio.google.com/apikey والصقه بدلا منه.")
             raise LLMError(f"Gemini key rejected: HTTP {r.status_code} {r.text[:200]}")
         names = [m["name"].split("/")[-1] for m in r.json().get("models", [])
                  if "generateContent" in m.get("supportedGenerationMethods", [])]
