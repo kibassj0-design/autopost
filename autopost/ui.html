@@ -289,7 +289,7 @@
         </div>
         <button class="btn primary" id="go">اصنع المقاطع</button>
       </div>
-      <details style="margin-top:12px">
+      <details style="margin-top:12px" id="opts">
         <summary class="muted small" style="cursor:pointer">خيارات لهذا الرابط</summary>
         <div class="row" style="margin-top:10px">
           <div class="field small"><label for="start">من الوقت</label><input id="start" dir="ltr" placeholder="0:00:00"></div>
@@ -304,7 +304,7 @@
               <option value="60">آخر ساعة ثم يكمل مباشرة</option>
               <option value="120">آخر ساعتين ثم يكمل مباشرة</option>
               <option value="start">من بداية البث ثم يكمل مباشرة</option>
-              <option value="at">من وقت محدد في البث (اكتبه في «من الوقت»، مثل 1:20:00)</option>
+              <option value="at">من وقت محدد في البث (اكتبه في «من الوقت»، مثل 0:30:00 = بعد نصف ساعة من بدايته)</option>
             </select></div>
         </div>
         <p class="muted small" style="margin:4px 0 0">الرجوع للوراء: في تويتش يحتاج أن يكون «حفظ البثوث السابقة» مفعّلا عند الستريمر، وفي يوتيوب يعمل إذا كان البث يسمح بالرجوع.</p>
@@ -863,6 +863,9 @@ function renderJobs(s) {
           el("div", { class: "title" }, [
             el("div", { class: "name" + (j.title ? "" : " ltr"), text: j.title || j.url }), lbl]),
           badge,
+          active && j.live && !j.stopping ? el("button", { class: "btn sm", text: "قص جزء سابق",
+            title: "قص جزء من البث حدث قبل إضافة الرابط، والمتابعة المباشرة مستمرة",
+            onclick: () => pastPart(j) }) : null,
           active ? el("button", { class: "btn sm danger",
             text: j.live ? (j.stopping ? "إلغاء نهائي" : "إيقاف البث") : "إلغاء",
             onclick: () => {
@@ -1012,6 +1015,24 @@ async function act(path, body, okText) {
   try { await api(path, body); if (okText) toast(okText, "ok"); } catch (e) { toast(e.message, "bad"); }
   refresh();
 }
+
+// ---------------------------------------------------------------- live helpers
+async function pastPart(j) {
+  const from = prompt("من أي وقت في البث تبدأ الأداة القص؟\nاكتب الوقت منذ بداية البث، مثلا 0:30:00 = بعد نصف ساعة من بدايته.", "0:30:00");
+  if (!from) return;
+  const to = prompt("إلى أي وقت؟ اتركه فارغا للقص حتى اللحظة الحالية.", "") || "";
+  try {
+    await api("/api/clip", { url: j.url, back: "at", start: from.trim(), end: to.trim(), past_only: true });
+    toast("بدأ قص الجزء السابق من " + from.trim() + (to.trim() ? " إلى " + to.trim() : " حتى الآن"), "ok");
+    refresh();
+  } catch (e) { toast(e.message, "bad"); }
+}
+// A stream link opens the stream options by itself, so the start point is easy to set.
+$("#url").addEventListener("input", () => {
+  const u = $("#url").value.trim();
+  const live = /twitch\.tv\/(?!videos\/)[^/?#]+\/?($|\?)/i.test(u) || /youtube\.com\/(@[^/]+\/)?live/i.test(u);
+  if (live && !$("#opts").open) { $("#opts").open = true; $("#back").focus(); }
+});
 
 // ---------------------------------------------------------------- home actions
 $("#go").addEventListener("click", async () => {

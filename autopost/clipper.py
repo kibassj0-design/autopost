@@ -1343,7 +1343,7 @@ def _cancelled():
 
 
 def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, stop=None,
-        cancel=None, back=None):
+        cancel=None, back=None, past_only=False):
     """Returns the list of finished clip files (already in inbox/ when queue=True).
     `progress(stage, fraction, detail)` is called as the work moves along.
     `cancel` (a threading.Event) ends the job at once, killing any running step.
@@ -1376,6 +1376,15 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, s
             try:
                 if back == "at":
                     back = ("at", parse_time(start) or 0)
+                if past_only:  # only an earlier stretch of a stream that is still on
+                    span = catch_range(info, back or "start", parse_time(end))
+                    if span is None:
+                        raise RuntimeError("Could not tell when this stream started, so its "
+                                           "earlier part can't be found")
+                    live["on"] = False
+                    tell("title", None, f"{info.get('title') or 'live'} "
+                                        f"({fmt_time(span[0])} - {fmt_time(span[1])})")
+                    return catch_up(info, cfg, work, tell, queue, *span)
                 return run_live(info, cfg, work, tell, stop, queue, cancel, back)
             finally:
                 shutil.rmtree(work, ignore_errors=True)
@@ -1793,6 +1802,23 @@ def catch_up(info, cfg, work, tell, queue, begin, until):
     return process(src, meta, chat, cfg, sub, tell, queue, part=label)
 
 
+def catch_range(info, back, until=None):
+    """(begin, end) in seconds into the stream for `back` (seconds before now, 'start',
+    or ('at', seconds)), or None when it can't be worked out."""
+    elapsed = stream_elapsed(info)
+    if elapsed is None:
+        return None
+    if back == "start":
+        begin = 0.0
+    elif isinstance(back, (tuple, list)):
+        begin = float(back[1])
+    else:
+        begin = elapsed - float(back)
+    end = min(float(until), elapsed) if until else elapsed
+    begin = max(0.0, min(begin, end - 60))
+    return (begin, end) if end - begin >= 60 else None
+
+
 def fmt_time(t):
     t = int(t)
     return f"{t // 3600}:{t % 3600 // 60:02d}:{t % 60:02d}"
@@ -1863,30 +1889,22 @@ def run_live(info, cfg, work, tell, stop, queue=True, cancel=None, back=None):
 
     past = None
     if back:
-        elapsed = stream_elapsed(info)
-        if elapsed is None:
+        span = catch_range(info, back)
+        if span is None:
             log.warning("The stream's start time is unknown; clipping from now on only")
             tell("warning", None, "no_catch_up: stream start time unknown")
         else:
-            if back == "start":
-                begin = 0.0
-            elif isinstance(back, (tuple, list)):
-                begin = float(back[1])
-            else:
-                begin = elapsed - float(back)
-            begin = max(0.0, min(begin, elapsed - 60))
-            if elapsed - begin >= 60:
-                def go(begin=begin, until=elapsed):
-                    _ctx.cancel = cancel  # this thread's ffmpeg runs stop on cancel too
-                    try:
-                        finished.extend(catch_up(info, cfg, work, tell, queue, begin, until))
-                    except Cancelled:
-                        pass
-                    except Exception as e:
-                        log.warning("Could not clip the earlier part of the stream: %s", e)
-                        tell("warning", None, f"no_catch_up: {str(e)[:200]}")
-                past = threading.Thread(target=go, daemon=True)
-                past.start()
+            def go(begin=span[0], until=span[1]):
+                _ctx.cancel = cancel  # this thread's ffmpeg runs stop on cancel too
+                try:
+                    finished.extend(catch_up(info, cfg, work, tell, queue, begin, until))
+                except Cancelled:
+                    pass
+                except Exception as e:
+                    log.warning("Could not clip the earlier part of the stream: %s", e)
+                    tell("warning", None, f"no_catch_up: {str(e)[:200]}")
+            past = threading.Thread(target=go, daemon=True)
+            past.start()
 
     def handle(path, index):
         offset = index * LIVE_CHUNK
