@@ -857,6 +857,9 @@ def caption_target(spoken, setting):
     return setting
 
 
+_last_wait = [0.0]
+
+
 def _mostly_arabic(texts):
     texts = [t for t in texts if t and t.strip()]
     if not texts:
@@ -886,10 +889,14 @@ def translate_units(units, target, cfg, context=""):
             break
         except (RuntimeError, ValueError, KeyError, TypeError) as e:
             lines = None
-            if attempt == 0 and llm.providers(cfg):
+            transient = re.search(r"429|quota|rate|exhausted|overloaded|503|500|timeout|"
+                                  r"network", str(e), re.I)
+            if attempt == 0 and transient and llm.providers(cfg) and \
+                    time.time() - _last_wait[0] > 600:
                 # Free AI quotas run out per minute: wait one minute and ask again
                 # rather than fall back to a word-by-word translation. (Rendering
                 # carries on meanwhile, so this costs little.)
+                _last_wait[0] = time.time()  # at most one such wait per 10 minutes
                 log.info("AI translation failed (%s); asking again in a minute", str(e)[:120])
                 for _ in range(60):
                     if _cancelled():

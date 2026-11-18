@@ -333,6 +333,17 @@ def _compat(name, system, text, schema, cfg):
             if r.status_code in (401, 403):
                 _dead.add(name)
                 raise LLMError(f"key rejected (HTTP {r.status_code})")
+            if r.status_code == 429 and attempt == 0 and not re.search(
+                    r"per day|TPD|RPD|daily", r.text, re.I):
+                # A per-minute limit (Groq's free plan has small ones): wait as long as
+                # the service asks, then ask again, instead of dropping the model.
+                m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", r.text)
+                delay = (int(m.group(1) or 0) * 60 + float(m.group(2))) if m else \
+                    float(r.headers.get("retry-after") or 20)
+                if delay <= 65:
+                    log.info("%s %s per-minute limit reached, waiting %.0fs", name, model, delay)
+                    time.sleep(delay + 0.5)
+                    continue
             if r.status_code >= 400:  # quota used up, input too long for this model, retired...
                 if r.status_code == 429:
                     _compat_spent.add((name, model))

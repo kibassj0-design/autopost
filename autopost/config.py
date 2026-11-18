@@ -11,7 +11,7 @@ DEFAULTS = {
     "platforms": ["youtube", "instagram", "tiktok"],
     "language": "ar",
     "post_language": "swap",
-    "ai_provider": "auto",
+    "ai_provider": "groq",  # tried first when its key is set; the others follow
     "gemini_model": "",
     "ai_models": {},
     "niche": "",
