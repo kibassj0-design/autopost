@@ -82,7 +82,19 @@ class App:
         threading.Thread(target=self._update_loop, daemon=True).start()
         threading.Thread(target=self._backup_loop, daemon=True).start()
         threading.Thread(target=self._predict_loop, daemon=True).start()
+        threading.Thread(target=self._tools_loop, daemon=True).start()
+        threading.Thread(target=self._fetch_assets, daemon=True).start()
         self._resume_jobs()
+
+    def _fetch_assets(self):
+        """Get the caption font and the face detector in the background at start, so the
+        first clip doesn't wait for them."""
+        from . import assets
+        assets.fonts_dir()
+        try:
+            assets.face_net()
+        except Exception as e:
+            log.info("Face detector unavailable: %s", e)
 
     def _predict_loop(self):
         """Score each new clip (queue and schedule) once, in the background."""
@@ -114,6 +126,32 @@ class App:
                 if path is not None:
                     failed.add(path.name)  # not again this run; "أعد التقييم" can retry it
                 log.warning("Virality prediction failed: %s", str(e)[:200])
+
+    def _tools_loop(self):
+        """Keep yt-dlp current: YouTube and Twitch change often, and an old yt-dlp stops
+        downloading. Checked at start and every 2 days; the new one is used for the next
+        link (no restart needed for links not yet started)."""
+        import subprocess
+        import sys
+        stamp = config.DATA / "yt-dlp-updated"
+        while True:
+            try:
+                last = float(stamp.read_text()) if stamp.exists() else 0
+            except ValueError:
+                last = 0
+            if time.time() - last > 2 * 86400:
+                try:
+                    r = subprocess.run([sys.executable, "-m", "pip", "install", "-U", "-q",
+                                        "--disable-pip-version-check", "yt-dlp[default]"],
+                                       capture_output=True, text=True, timeout=300)
+                    if r.returncode == 0:
+                        stamp.write_text(str(time.time()))
+                        log.info("yt-dlp is up to date")
+                    else:
+                        log.info("yt-dlp update skipped: %s", r.stderr.strip()[-160:])
+                except Exception as e:
+                    log.info("yt-dlp update skipped: %s", e)
+            time.sleep(6 * 3600)
 
     def _backup_loop(self):
         while True:  # posts and schedule change all day; keys are saved when they change

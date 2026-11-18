@@ -41,7 +41,7 @@ DEFAULTS = {
         "captions": True,
         "captions_language": "swap",
         "caption_style": "capcut",
-        "caption_font": "Arial",
+        "caption_font": "Tajawal ExtraBold",  # downloaded once; system font if it can't be
         "layout": "auto",
         "title_overlay": True,  # a short hook headline at the top in the first seconds
         "jump_cuts": True,      # cut dead air (no speech, near silence) out of clips
@@ -115,6 +115,8 @@ def load():
                 cfg[key].update(value)
             else:
                 cfg[key] = value
+    if cfg["clipper"].get("caption_font") in ("Arial", "Tajawal"):
+        cfg["clipper"]["caption_font"] = "Tajawal ExtraBold"  # the bundled caption font
     if cfg.get("ai_provider") in ("auto", "", None):
         cfg["ai_provider"] = "groq"  # "auto" from older versions: Groq first
     DATA.mkdir(exist_ok=True)
