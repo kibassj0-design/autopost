@@ -53,6 +53,12 @@ class Publisher:
                                    "v.id=p.video_id WHERE p.id=?", (post_id,)).fetchone()
             if row:
                 self._tell(row["title"], {row["platform"]: result})
+            vid = self._db.execute("SELECT video_id FROM posts WHERE id=?", (post_id,)).fetchone()
+            if str(result).startswith("FAILED") and vid:
+                self._plan_retries(vid["video_id"])
+            else:
+                self._db.execute("DELETE FROM retries WHERE post_id=?", (post_id,))
+                self._db.commit()
         except Exception as e:
             log.error("Retry of post %d: %s", post_id, e)
             store.update_post(self._db, post_id, error=str(e))
@@ -105,6 +111,35 @@ class Publisher:
         self._sizes[path] = size
         return done
 
+    RETRY_AFTER = (15 * 60, 45 * 60, 2 * 3600)  # automatic retries of a failed platform
+
+    def _plan_retries(self, video_id):
+        """A platform that refused a clip gets it again by itself, a few times, spaced out:
+        most failures (a busy server, a slow video processing, a limit) pass."""
+        for row in self._db.execute("SELECT id FROM posts WHERE video_id=? AND error IS NOT "
+                                    "NULL", (video_id,)).fetchall():
+            have = self._db.execute("SELECT attempts FROM retries WHERE post_id=?",
+                                    (row["id"],)).fetchone()
+            attempts = have["attempts"] if have else 0
+            if attempts >= len(self.RETRY_AFTER):
+                self._db.execute("DELETE FROM retries WHERE post_id=?", (row["id"],))
+                continue
+            self._db.execute("INSERT OR REPLACE INTO retries VALUES(?,?,?)",
+                             (row["id"], attempts, time.time() + self.RETRY_AFTER[attempts]))
+            log.info("Post %d failed; trying it again in %d min", row["id"],
+                     self.RETRY_AFTER[attempts] // 60)
+        self._db.commit()
+
+    def _due_retry(self):
+        row = self._db.execute("SELECT post_id, attempts FROM retries WHERE next_at<=? "
+                               "ORDER BY next_at LIMIT 1", (time.time(),)).fetchone()
+        if row is None:
+            return None
+        self._db.execute("UPDATE retries SET attempts=attempts+1, next_at=? WHERE post_id=?",
+                         (time.time() + 10 ** 9, row["post_id"]))  # not again until planned
+        self._db.commit()
+        return row["post_id"]
+
     def _tell(self, title, results):
         """Notify the phone about one post: the links, or what failed."""
         names = {"youtube": "يوتيوب", "instagram": "انستغرام", "tiktok": "تيك توك"}
@@ -138,9 +173,11 @@ class Publisher:
         target = self.done
         try:
             self.cancel_flag.clear()
-            _, results, text = pipeline.publish(kept, self.cfg, note=note, db=self._db,
-                                                stop=self.cancel_flag.is_set)
+            video_id, results, text = pipeline.publish(kept, self.cfg, note=note, db=self._db,
+                                                       stop=self.cancel_flag.is_set)
             self._tell(text.get("youtube", {}).get("title") or path.stem, results)
+            if any(not str(r).startswith("FAILED") for r in results.values()):
+                self._plan_retries(video_id)  # the others went up: retry just the failed ones
             if all(str(r).startswith("FAILED") for r in results.values()):
                 target = self.failed
         except pipeline.PublishCancelled:
@@ -195,12 +232,14 @@ class Publisher:
             platforms = [p for p in json.loads(row["platforms"] or "[]")
                          if config.connected(p)] or None
             self.cancel_flag.clear()
-            _, result, text = pipeline.publish(path, self.cfg, note=row["note"] or "",
+            video_id, result, text = pipeline.publish(path, self.cfg, note=row["note"] or "",
                                                platforms=platforms, db=self._db,
                                                own_caption=row["caption"],
                                                stop=self.cancel_flag.is_set)
             self._tell(row["title"] or text.get("youtube", {}).get("title") or path.stem,
                        result)
+            if any(not str(r).startswith("FAILED") for r in result.values()):
+                self._plan_retries(video_id)
             if all(str(r).startswith("FAILED") for r in result.values()):
                 status = "failed"
         except pipeline.PublishCancelled:
@@ -258,6 +297,10 @@ class Publisher:
             self.release, self.first, self._logged = False, None, None
             self._publish(path)
 
+        if not self.retries and accounts:
+            due = self._due_retry()
+            if due is not None:
+                self.retries.append(due)
         if self.retries:
             self._retry(self.retries[0])
 

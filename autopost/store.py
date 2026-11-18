@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS posts(
 CREATE TABLE IF NOT EXISTS schedule(
   id INTEGER PRIMARY KEY, path TEXT, title TEXT, caption TEXT, note TEXT,
   platforms TEXT, at REAL, status TEXT DEFAULT 'pending', result TEXT, created REAL);
+CREATE TABLE IF NOT EXISTS retries(
+  post_id INTEGER PRIMARY KEY, attempts INTEGER DEFAULT 0, next_at REAL);
 CREATE TABLE IF NOT EXISTS stats(
   post_id INTEGER, ts REAL, views INTEGER, likes INTEGER, comments INTEGER, shares INTEGER);
 """
