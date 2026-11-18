@@ -82,6 +82,7 @@ class App:
         threading.Thread(target=self._update_loop, daemon=True).start()
         threading.Thread(target=self._backup_loop, daemon=True).start()
         threading.Thread(target=self._predict_loop, daemon=True).start()
+        self._resume_jobs()
 
     def _predict_loop(self):
         """Score each new clip (queue and schedule) once, in the background."""
@@ -121,11 +122,46 @@ class App:
 
     # ---- clip jobs
 
-    def add_job(self, url, count=None, start=None, end=None, back=None, past_only=False):
+    JOBS_FILE = "jobs.json"  # jobs not finished yet, so a restart carries them on
+
+    def _save_jobs(self):
+        keep = [{k: j.get(k) for k in ("url", "title", "start", "end", "back", "past_only",
+                                        "live", "work", "began", "last_seen")}
+                for j in self.jobs if j["status"] in ("queued", "running")]
+        try:
+            config.atomic_write(config.DATA / self.JOBS_FILE,
+                                json.dumps(keep, ensure_ascii=False, default=str))
+        except OSError as e:
+            log.info("Could not save the job list: %s", e)
+
+    def _resume_jobs(self):
+        """Links that were still being worked on when the tool closed (an update, a crash,
+        a power cut) start again on their own, from where they were."""
+        try:
+            saved = json.loads((config.DATA / self.JOBS_FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        for j in saved:
+            if j.get("live") and not j.get("past_only"):
+                # Follow the stream again, and first clip the minutes missed meanwhile.
+                gap = time.time() - (j.get("last_seen") or time.time())
+                back = int(min(max(gap + 90, 120), 6 * 3600))
+                log.info("Resuming the live stream %s (and the %d min missed)", j["url"],
+                         back // 60)
+                self.add_job(j["url"], back=back)
+            else:
+                log.info("Resuming %s from where it stopped", j.get("title") or j["url"])
+                self.add_job(j["url"], None, j.get("start"), j.get("end"), j.get("back"),
+                             bool(j.get("past_only")), work=j.get("work"))
+
+    def add_job(self, url, count=None, start=None, end=None, back=None, past_only=False,
+                work=None):
+        stamp = time.strftime("%Y%m%d-%H%M%S")
         job = {"id": len(self.jobs) + 1, "url": url, "title": "", "status": "queued",
                "stage": "queued", "fraction": None, "detail": "", "warnings": [],
                "error": "", "clips": 0, "start": start, "end": end, "live": False,
-               "back": back, "past_only": past_only,
+               "back": back, "past_only": past_only, "last_seen": time.time(),
+               "work": work or str(config.DATA / "clips" / f"{stamp}-{len(self.jobs) + 1}"),
                "began": time.time(), "ended": None, "timings": {}, "stage_at": time.time()}
         self.jobs.append(job)
         self.stops[job["id"]] = threading.Event()
@@ -133,6 +169,7 @@ class App:
         # Each job has its own thread, so a live stream being followed doesn't hold up
         # other links; the heavy part of each job still runs one at a time.
         threading.Thread(target=self._work, args=(job,), daemon=True).start()
+        self._save_jobs()
         return job
 
     def stop_job(self, job_id):
@@ -151,8 +188,12 @@ class App:
     def _work(self, job):
         from . import clipper
         job["status"] = "running"
+        self._save_jobs()
 
         def progress(stage, fraction, detail, job=job):
+            if time.time() - job.get("last_seen", 0) > 15:
+                job["last_seen"] = time.time()  # how far a live stream got, for a restart
+                self._save_jobs()
             if stage == "title":
                 job["title"] = detail
                 return
@@ -186,7 +227,7 @@ class App:
             clips = clipper.run(job["url"], self.cfg, start=job["start"], end=job["end"],
                                 progress=progress, stop=self.stops[job["id"]],
                                 cancel=self.cancels[job["id"]], back=job.get("back"),
-                                past_only=job.get("past_only", False))
+                                past_only=job.get("past_only", False), work=job["work"])
             result = dict(status="done", stage="done", fraction=1, clips=len(clips))
             if clips and not job.get("live"):
                 notify.send(self.cfg, "clips", "مقاطع جديدة جاهزة",
@@ -203,6 +244,7 @@ class App:
             job["timings"][job["stage"]] = round(
                 job["timings"].get(job["stage"], 0) + job["ended"] - job["stage_at"])
         job.update(result)
+        self._save_jobs()
 
     # ---- updates
 
@@ -689,9 +731,9 @@ def make_handler(app):
             elif path == "/api/update/check":
                 return app.check_update()
             elif path == "/api/update/apply":
-                if not app.idle():
-                    raise ValueError("انتظر حتى ينتهي الشغل الجاري أو ألغه، ثم حدّث.")
-                app.apply_update()
+                if app.publisher.current is not None:
+                    raise ValueError("يُنشر مقطع الآن؛ حدّث بعد دقيقة حين ينتهي.")
+                app.apply_update()  # running links resume by themselves after the restart
                 return {"restarting": True}
             elif path == "/api/publisher/cancel":
                 if not pub.current:

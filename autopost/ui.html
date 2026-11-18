@@ -1430,7 +1430,9 @@ function renderUpdate(u) {
   $("#upd-status").textContent = st;
 }
 async function doUpdate() {
-  if (!confirm("تحديث الأداة الآن؟ ستُغلق وتُفتح من جديد خلال ثوانٍ، ومفاتيحك وإعداداتك تبقى كما هي.")) return;
+  const busy = state && state.jobs.some(j => ["queued", "running"].includes(j.status));
+  if (!confirm("تحديث الأداة الآن؟ ستُغلق وتُفتح من جديد خلال ثوانٍ، ومفاتيحك وإعداداتك تبقى كما هي." +
+    (busy ? "\n\nالشغل الجاري يكمل وحده بعد التحديث من حيث توقف (والبث المباشر يقص أيضا الدقائق التي فاتت)." : ""))) return;
   try {
     await api("/api/update/apply", {});
     toast("يحدّث… ستعود الأداة خلال ثوانٍ", "ok");

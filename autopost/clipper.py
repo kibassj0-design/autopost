@@ -1343,7 +1343,7 @@ def _cancelled():
 
 
 def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, stop=None,
-        cancel=None, back=None, past_only=False):
+        cancel=None, back=None, past_only=False, work=None):
     """Returns the list of finished clip files (already in inbox/ when queue=True).
     `progress(stage, fraction, detail)` is called as the work moves along.
     `cancel` (a threading.Event) ends the job at once, killing any running step.
@@ -1362,9 +1362,10 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, s
         if progress:
             progress(stage, fraction, detail)
 
-    job = time.strftime("%Y%m%d-%H%M%S")
-    work = config.DATA / "clips" / job
-    work.mkdir(parents=True)
+    # A given folder is the one of an earlier, interrupted run of this link: what it
+    # already holds (download, transcript, picks, finished clips) is used again.
+    work = Path(work) if work else config.DATA / "clips" / time.strftime("%Y%m%d-%H%M%S")
+    work.mkdir(parents=True, exist_ok=True)
     max_height = 1440 if str(cfg.get("resolution")) == "1440" else 1080
 
     info = None
@@ -1391,8 +1392,14 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, s
 
     tell("download", 0)
     try:
-        src, meta, chat = download(url, work, max_height, parse_time(start), parse_time(end),
-                                   tell, info)
+        done = _load_state(work / "download.json")
+        if done and (work / done["file"]).exists():
+            src, meta, chat = work / done["file"], done["meta"], done["chat"]
+            log.info("Using the download from before the restart")
+        else:
+            src, meta, chat = download(url, work, max_height, parse_time(start),
+                                       parse_time(end), tell, info)
+            _save_state(work / "download.json", {"file": src.name, "meta": meta, "chat": chat})
         return process(src, meta, chat, cfg, work, tell, queue)
     except Exception as e:
         if cancel.is_set():
@@ -1433,6 +1440,21 @@ class _heavy:
         PROCESS_LOCK.release()
 
 
+def _load_state(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state(path, state):
+    """Each finished step is written down, so a restart (an update, a crash, a power cut)
+    carries on from there instead of starting the link over."""
+    tmp = Path(path).with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, default=str), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def process(src, meta, chat, cfg, work, tell, queue=True, part="", skip_before=0.0):
     """Find the strong moments in `src` and turn each into a finished clip.
     skip_before: the first seconds were already looked at (live chunks overlap); a clip
@@ -1462,6 +1484,11 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
                     info["width"], info["height"])
         tell("warning", None, f"low_source: {info['width']}x{info['height']}")
 
+    state_file = work / f"state-{Path(src).name}.json"
+    resumable = not part.startswith(" #")  # live chunks are not resumed
+    state = _load_state(state_file) if resumable else {}
+    if state:
+        log.info("Resuming %s from where it stopped", meta["title"])
     segments, curve, spoken, wav, levels, heat = [], [], None, None, [], None
     impacts = visual = None
     if info["acodec"]:
@@ -1470,12 +1497,18 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
         heat = heatmap_curve(meta, len(levels) - 1, meta.get("offset", 0.0))
         if heat is not None:
             log.info("Using YouTube's most-replayed graph as a signal")
-        impacts = signals.audio_impacts(wav, len(levels))
+        impacts = signals.audio_impacts(wav, len(levels)) if "clips" not in state else None
         try:
-            tell("transcribe", 0, meta["title"])
-            with _heavy(tell, "transcribe"):
-                segments, spoken = transcribe(wav, whisper_model(cfg), c["language"], tell,
-                                              c.get("whisper_device", "cpu"))
+            if "segments" in state:
+                segments, spoken = state["segments"], state["spoken"]
+            else:
+                tell("transcribe", 0, meta["title"])
+                with _heavy(tell, "transcribe"):
+                    segments, spoken = transcribe(wav, whisper_model(cfg), c["language"],
+                                                  tell, c.get("whisper_device", "cpu"))
+                if resumable:
+                    state.update(segments=segments, spoken=spoken)
+                    _save_state(state_file, state)
             log.info("Spoken language: %s, %d lines", spoken, len(segments))
         except Cancelled:
             raise
@@ -1484,6 +1517,10 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
                         "without captions.", str(e)[:200])
             tell("warning", None, f"no_captions: {str(e)[:200]}")
 
+    if "clips" in state:
+        clips = state["clips"]
+        return _finish(src, meta, cfg, work, tell, queue, part, c, info, remote, segments,
+                       spoken, wav, clips, state, state_file)
     n = len(levels) or int(info["duration"]) + 1
     if not remote:  # the picture is here: sudden action and flashes count too
         visual = signals.visual_activity(src, n)
@@ -1520,6 +1557,20 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
     if not clips:
         log.info("No strong moment in %s%s", meta["title"], part)
         return []
+    if resumable:
+        state["clips"] = clips
+        _save_state(state_file, state)
+    return _finish(src, meta, cfg, work, tell, queue, part, c, info, remote, segments,
+                   spoken, wav, clips, state, state_file)
+
+
+def _finish(src, meta, cfg, work, tell, queue, part, c, info, remote, segments, spoken,
+            wav, clips, state, state_file):
+    """Captions, sections and rendering of the chosen clips (resumable step by step)."""
+    out_dir = work / "out"
+    out_dir.mkdir(exist_ok=True)
+    rendered = set(state.get("rendered", []))
+    resumable = not part.startswith(" #")
     if not info["acodec"]:
         log.warning("The source has no audio track; clips will be silent")
 
@@ -1532,6 +1583,8 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
 
     def download_sections():
         for n, clip in enumerate(clips, 1):
+            if n in rendered:
+                continue  # made before a restart
             try:
                 arrived.put((n, fetch_section(meta, clip, work, n, tell), None))
             except Exception as e:  # handed to the renderer, which stops the job
@@ -1545,7 +1598,10 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
     clip_words = [[x for x in segments if x["end"] > k["start"] and x["start"] < k["end"]]
                   for k in clips]
     clip_caps = [list(w) for w in clip_words]
-    if c["captions"] and segments and wav is not None:
+    captioned = "clip_caps" in state
+    if captioned:
+        clip_words, clip_caps, clips = state["clip_words"], state["clip_caps"], state["clips"]
+    if c["captions"] and segments and wav is not None and not captioned:
         model_name = caption_model(cfg, spoken)
         hint = meta["title"] + "."
         tell("transcribe_clips")
@@ -1594,7 +1650,7 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
                 tell("warning", None, "no_translation: no translation service answered")
             elif "basic" in used:
                 tell("warning", None, "basic_translation: no AI service answered")
-    if wav is not None and c.get("jump_cuts", True):
+    if wav is not None and c.get("jump_cuts", True) and not captioned:
         for i, k in enumerate(clips):
             try:
                 words = [w for x in clip_words[i] for w in x.get("words") or []]
@@ -1605,6 +1661,9 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
                              len(k["keep"]) - 1)
             except Exception as e:  # a nicety: never lose a clip over it
                 log.info("Dead-air check skipped (%s)", str(e)[:100])
+    if resumable and not captioned:
+        state.update(clip_words=clip_words, clip_caps=clip_caps, clips=clips)
+        _save_state(state_file, state)
     if wav is not None:
         wav.unlink(missing_ok=True)
 
@@ -1615,6 +1674,8 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
     finished = []
     for n, clip in enumerate(clips, 1):
         out = out_dir / f"{slug}-{stamp}-{n:02d}.mp4"
+        if n in rendered:
+            continue
         tell("render", (n - 1) / len(clips), f"{n}/{len(clips)}")
         began = time.time()
         if remote:  # render from this clip's own section file, once it has arrived
@@ -1665,6 +1726,10 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
         else:
             out.with_suffix(".txt").write_text(note, encoding="utf-8")
             finished.append(out)
+        if resumable:
+            rendered.add(n)
+            state["rendered"] = sorted(rendered)
+            _save_state(state_file, state)
     if remote:
         shutil.rmtree(work / "sections", ignore_errors=True)
     return finished
@@ -1786,7 +1851,12 @@ def catch_up(info, cfg, work, tell, queue, begin, until):
         if not vod:
             raise RuntimeError("Twitch has no past broadcast of this stream (the streamer "
                                "may have past broadcasts turned off, or subscriber-only)")
-        src, meta, chat = download(vod, sub, max_height, begin, until, tell)
+        done = _load_state(sub / "download.json")
+        if done and (sub / done["file"]).exists():
+            src, meta, chat = sub / done["file"], done["meta"], done["chat"]
+        else:
+            src, meta, chat = download(vod, sub, max_height, begin, until, tell)
+            _save_state(sub / "download.json", {"file": src.name, "meta": meta, "chat": chat})
     elif "youtube" in host:
         # YouTube keeps the start of a live stream: read it from the start, this stretch only.
         opts = _ydl_opts(sub, tell, live_from_start=True, **_video_format(max_height))
