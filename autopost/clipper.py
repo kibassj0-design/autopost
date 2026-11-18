@@ -82,7 +82,7 @@ def download(url, work, max_height, start=None, end=None, tell=lambda *a: None, 
     duration = float(info.get("duration") or 0)
     if start is not None or end is not None:
         duration = (end or duration) - (start or 0)
-    audio_only = duration >= SECTIONS_FROM and start is None and end is None
+    audio_only = duration >= SECTIONS_FROM
     opts = _ydl_opts(work, tell, **({"format": "bestaudio/best"} if audio_only
                                     else _video_format(max_height)))
     if start is not None or end is not None:
@@ -118,12 +118,14 @@ def fetch_section(meta, clip, work, n, tell=lambda *a: None):
     import yt_dlp
 
     start, end = max(0.0, clip["start"] - 1), clip["end"] + 1
+    shift = float(meta.get("offset") or 0)  # the audio began this far into the source
     secdir = work / "sections"
     secdir.mkdir(exist_ok=True)
     opts = _ydl_opts(work, tell, **_video_format(meta["max_height"]))
     opts.update({
         "outtmpl": str(secdir / f"s{n:03d}.%(ext)s"),
-        "download_ranges": yt_dlp.utils.download_range_func(None, [(start, end)]),
+        "download_ranges": yt_dlp.utils.download_range_func(
+            None, [(start + shift, end + shift)]),
         # Exact cut points, so caption timing lines up with the clip.
         "force_keyframes_at_cuts": True,
     })
@@ -1341,7 +1343,7 @@ def _cancelled():
 
 
 def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, stop=None,
-        cancel=None):
+        cancel=None, back=None):
     """Returns the list of finished clip files (already in inbox/ when queue=True).
     `progress(stage, fraction, detail)` is called as the work moves along.
     `cancel` (a threading.Event) ends the job at once, killing any running step.
@@ -1372,7 +1374,9 @@ def run(url, cfg, count=None, start=None, end=None, queue=True, progress=None, s
         if is_live(info):
             live["on"] = True
             try:
-                return run_live(info, cfg, work, tell, stop, queue, cancel)
+                if back == "at":
+                    back = ("at", parse_time(start) or 0)
+                return run_live(info, cfg, work, tell, stop, queue, cancel, back)
             finally:
                 shutil.rmtree(work, ignore_errors=True)
 
@@ -1731,7 +1735,72 @@ def _youtube_live_chat(url, work, started, events, stop):
             proc.kill()
 
 
-def run_live(info, cfg, work, tell, stop, queue=True, cancel=None):
+def stream_elapsed(info):
+    """Seconds since the live stream began, or None when the link doesn't say."""
+    began = info.get("release_timestamp") or info.get("timestamp")
+    if not began:
+        return None
+    return max(0.0, time.time() - float(began))
+
+
+def _twitch_current_vod(channel, began):
+    """The past-broadcast page of the stream that is on now (Twitch keeps one while the
+    stream runs, when the streamer has past broadcasts turned on), or None."""
+    import yt_dlp
+    url = f"https://www.twitch.tv/{channel}/videos?filter=archives&sort=time"
+    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
+                           "playlistend": 1}) as ydl:
+        entries = list(ydl.extract_info(url, download=False).get("entries") or [])
+    if not entries:
+        return None
+    vod = entries[0]
+    ts = vod.get("timestamp") or vod.get("release_timestamp")
+    if began and ts and abs(float(ts) - float(began)) > 30 * 60:
+        return None  # the newest past broadcast is an older stream, not this one
+    return vod.get("url") or (f"https://www.twitch.tv/videos/{vod['id']}" if vod.get("id") else None)
+
+
+def catch_up(info, cfg, work, tell, queue, begin, until):
+    """Clip the part of a live stream that was already over when the job started,
+    from `begin` to `until` seconds into the stream."""
+    import yt_dlp
+
+    host = (info.get("extractor_key") or "").lower()
+    sub = work / "past"
+    sub.mkdir(exist_ok=True)
+    max_height = 1440 if str(cfg.get("resolution")) == "1440" else 1080
+    label = f" (من {fmt_time(begin)} إلى {fmt_time(until)})"
+    log.info("Catching up on the stream from %s to %s", fmt_time(begin), fmt_time(until))
+    if "twitch" in host:
+        vod = _twitch_current_vod(info.get("uploader_id") or "",
+                                  info.get("timestamp") or info.get("release_timestamp"))
+        if not vod:
+            raise RuntimeError("Twitch has no past broadcast of this stream (the streamer "
+                               "may have past broadcasts turned off, or subscriber-only)")
+        src, meta, chat = download(vod, sub, max_height, begin, until, tell)
+    elif "youtube" in host:
+        # YouTube keeps the start of a live stream: read it from the start, this stretch only.
+        opts = _ydl_opts(sub, tell, live_from_start=True, **_video_format(max_height))
+        opts["download_ranges"] = yt_dlp.utils.download_range_func(None, [(begin, until)])
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.extract_info(info.get("webpage_url"), download=True)
+        src = next(p for p in sub.glob("source.*") if not p.name.endswith((".part", ".ytdl")))
+        meta = {"title": info.get("title") or "", "url": info.get("webpage_url") or "",
+                "channel": info.get("uploader") or info.get("channel") or "", "remote": False}
+        chat = []
+    else:
+        raise RuntimeError("going back in time works for Twitch and YouTube streams")
+    return process(src, meta, chat, cfg, sub, tell, queue, part=label)
+
+
+def fmt_time(t):
+    t = int(t)
+    return f"{t // 3600}:{t % 3600 // 60:02d}:{t % 60:02d}"
+
+
+def run_live(info, cfg, work, tell, stop, queue=True, cancel=None, back=None):
+    """`back`: also clip what already happened: seconds before now, 'start' for the
+    whole stream so far, or ('at', seconds into the stream)."""
     """Record a live stream in chunks and make clips from each chunk while the
     stream goes on, until it ends or `stop` is set."""
     import threading
@@ -1791,6 +1860,33 @@ def run_live(info, cfg, work, tell, stop, queue=True, cancel=None):
 
     finished, done_chunks = [], 0
     previous = {}  # the last chunk, kept so a moment on the border is not cut in two
+
+    past = None
+    if back:
+        elapsed = stream_elapsed(info)
+        if elapsed is None:
+            log.warning("The stream's start time is unknown; clipping from now on only")
+            tell("warning", None, "no_catch_up: stream start time unknown")
+        else:
+            if back == "start":
+                begin = 0.0
+            elif isinstance(back, (tuple, list)):
+                begin = float(back[1])
+            else:
+                begin = elapsed - float(back)
+            begin = max(0.0, min(begin, elapsed - 60))
+            if elapsed - begin >= 60:
+                def go(begin=begin, until=elapsed):
+                    _ctx.cancel = cancel  # this thread's ffmpeg runs stop on cancel too
+                    try:
+                        finished.extend(catch_up(info, cfg, work, tell, queue, begin, until))
+                    except Cancelled:
+                        pass
+                    except Exception as e:
+                        log.warning("Could not clip the earlier part of the stream: %s", e)
+                        tell("warning", None, f"no_catch_up: {str(e)[:200]}")
+                past = threading.Thread(target=go, daemon=True)
+                past.start()
 
     def handle(path, index):
         offset = index * LIVE_CHUNK
@@ -1856,6 +1952,12 @@ def run_live(info, cfg, work, tell, stop, queue=True, cancel=None):
             tell("live", None, f"stopping · {len(finished)} clips")
         time.sleep(1 if stop.is_set() else 5)
     errlog.close()
+    if past is not None:
+        while past.is_alive():  # the earlier part is still being clipped
+            if cancel.is_set():
+                raise Cancelled("cancelled")
+            tell("live", None, f"catching up · {len(finished)} clips")
+            past.join(5)
     if previous.get("path") is not None:
         previous["path"].unlink(missing_ok=True)
     if recorder.returncode not in (0, 255, None) and not finished and done_chunks == 0:

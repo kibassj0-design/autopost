@@ -295,6 +295,19 @@
           <div class="field small"><label for="start">من الوقت</label><input id="start" dir="ltr" placeholder="0:00:00"></div>
           <div class="field small"><label for="end">إلى الوقت</label><input id="end" dir="ltr" placeholder="نهاية الفيديو"></div>
         </div>
+        <div class="row" style="margin-top:6px">
+          <div class="field"><label for="back">للبث المباشر: من أين تبدأ الأداة القص؟</label>
+            <select id="back">
+              <option value="">من الآن (ما يحدث بعد إضافة الرابط)</option>
+              <option value="15">آخر 15 دقيقة ثم يكمل مباشرة</option>
+              <option value="30">آخر 30 دقيقة ثم يكمل مباشرة</option>
+              <option value="60">آخر ساعة ثم يكمل مباشرة</option>
+              <option value="120">آخر ساعتين ثم يكمل مباشرة</option>
+              <option value="start">من بداية البث ثم يكمل مباشرة</option>
+              <option value="at">من وقت محدد في البث (اكتبه في «من الوقت»، مثل 1:20:00)</option>
+            </select></div>
+        </div>
+        <p class="muted small" style="margin:4px 0 0">الرجوع للوراء: في تويتش يحتاج أن يكون «حفظ البثوث السابقة» مفعّلا عند الستريمر، وفي يوتيوب يعمل إذا كان البث يسمح بالرجوع.</p>
       </details>
     </div>
     <div class="card">
@@ -634,7 +647,8 @@ const STAGES = { queued: "بالانتظار", waiting: "بانتظار دوره
   transcribe: "تفريغ الكلام", transcribe_clips: "تفريغ دقيق لكلام المقاطع", pick: "الذكاء الاصطناعي يختار أفضل اللحظات", translate: "ترجمة الكتابة",
   render: "تصيير المقاطع", done: "اكتمل" };
 const STEP_NAMES = { download: "تنزيل", audio: "صوت", transcribe: "تفريغ", transcribe_clips: "تفريغ دقيق", pick: "اختيار", translate: "ترجمة", render: "تصيير", waiting: "انتظار" };
-const WARNINGS = { no_captions: "المقاطع بدون كتابة: فشل تفريغ الكلام",
+const WARNINGS = { no_catch_up: "تعذّر قص الجزء السابق من البث (الأداة تكمل القص من الآن)",
+  no_captions: "المقاطع بدون كتابة: فشل تفريغ الكلام",
   no_ai_pick: "اللحظات اختيرت من الصوت والشات فقط (الذكاء الاصطناعي غير متاح)",
   no_translation: "الكتابة بقيت بلغة المتحدث (الترجمة غير متاحة)",
   basic_translation: "تُرجمت الكتابة بمترجم آلي بسيط لأن الذكاء الاصطناعي لم يرد، فقد تكون حرفية. تأكد من مفاتيح الذكاء الاصطناعي بزر «فحص الإعداد».",
@@ -1004,7 +1018,7 @@ $("#go").addEventListener("click", async () => {
   const btn = $("#go");
   btn.disabled = true;
   try {
-    await api("/api/clip", { url: $("#url").value, start: $("#start").value, end: $("#end").value });
+    await api("/api/clip", { url: $("#url").value, start: $("#start").value, end: $("#end").value, back: $("#back").value });
     $("#url").value = "";
     toast("بدأ العمل على الرابط", "ok");
   } catch (e) { toast(e.message, "bad"); }

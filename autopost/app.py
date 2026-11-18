@@ -121,10 +121,11 @@ class App:
 
     # ---- clip jobs
 
-    def add_job(self, url, count=None, start=None, end=None):
+    def add_job(self, url, count=None, start=None, end=None, back=None):
         job = {"id": len(self.jobs) + 1, "url": url, "title": "", "status": "queued",
                "stage": "queued", "fraction": None, "detail": "", "warnings": [],
                "error": "", "clips": 0, "start": start, "end": end, "live": False,
+               "back": back,
                "began": time.time(), "ended": None, "timings": {}, "stage_at": time.time()}
         self.jobs.append(job)
         self.stops[job["id"]] = threading.Event()
@@ -184,7 +185,7 @@ class App:
         try:
             clips = clipper.run(job["url"], self.cfg, start=job["start"], end=job["end"],
                                 progress=progress, stop=self.stops[job["id"]],
-                                cancel=self.cancels[job["id"]])
+                                cancel=self.cancels[job["id"]], back=job.get("back"))
             result = dict(status="done", stage="done", fraction=1, clips=len(clips))
             if clips and not job.get("live"):
                 notify.send(self.cfg, "clips", "مقاطع جديدة جاهزة",
@@ -668,7 +669,11 @@ def make_handler(app):
                 link = str(body.get("url", "")).strip()
                 if not link:
                     raise ValueError("الصق رابطا أولا.")
-                app.add_job(link, None, body.get("start") or None, body.get("end") or None)
+                back = body.get("back") or None
+                if back not in (None, "start", "at"):
+                    back = int(back)  # minutes before now
+                    back = back * 60 if back > 0 else None
+                app.add_job(link, None, body.get("start") or None, body.get("end") or None, back)
             elif path == "/api/settings":
                 app.save(body)
                 return app.settings()
