@@ -46,7 +46,7 @@ DEFAULTS = {
         "title_overlay": True,  # a short hook headline at the top in the first seconds
         "jump_cuts": True,      # cut dead air (no speech, near silence) out of clips
         "cover": True,          # a designed cover as the first second of every clip
-        "cover_ms": 1000,       # how long it shows
+        "cover_ms": 500,        # how long it shows (half a second)
         "max_height": 1080,
     },
     "virality": {
@@ -117,6 +117,8 @@ def load():
                 cfg[key].update(value)
             else:
                 cfg[key] = value
+    if cfg["clipper"].get("cover_ms") == 1000:
+        cfg["clipper"]["cover_ms"] = 500  # the cover shows for half a second
     if cfg["clipper"].get("caption_font") in ("Arial", "Tajawal"):
         cfg["clipper"]["caption_font"] = "Tajawal ExtraBold"  # the bundled caption font
     if cfg.get("ai_provider") in ("auto", "", None):

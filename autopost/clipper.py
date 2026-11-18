@@ -1320,7 +1320,7 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
         if not matches:
             layout = "blurred fill"
     cover = None
-    cover_s = max(0.0, c.get("cover_ms", 1000) / 1000) if c.get("cover", True) else 0
+    cover_s = max(0.0, c.get("cover_ms", 500) / 1000) if c.get("cover", True) else 0
     if cover_s:
         try:
             texts = [clip.get("cover_ar") or "", clip.get("cover_en") or ""]
