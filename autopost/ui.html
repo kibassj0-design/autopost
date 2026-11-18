@@ -65,6 +65,8 @@
   .chip.on { color: var(--text); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
   .chip.on::before { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
   .chip.off::before { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
+  .chip.warn { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+  .chip.warn::before { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
   .theme { align-self: flex-start; }
   main { padding: 28px clamp(16px, 3vw, 40px) 80px; max-width: 1080px; width: 100%; }
   .page-head { display: flex; align-items: end; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
@@ -140,6 +142,8 @@
   .vbar .track { height: 8px; border-radius: 99px; background: var(--panel2); overflow: hidden; }
   .vbar .track i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
   .vscore { font-size: 44px; font-weight: 800; line-height: 1; }
+  img.cover { width: 54px; height: 96px; object-fit: cover; border-radius: 8px; flex: none; cursor: zoom-in;
+              border: 1px solid var(--line); background: var(--panel2); }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
   .tile { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
   .tile .big { font-size: 22px; font-weight: 700; margin: 2px 0; }
@@ -470,6 +474,13 @@
       <h2>الذكاء الاصطناعي</h2>
       <p class="muted small" style="margin-top:0">يكفي مفتاح واحد. يختار اللحظات، يترجم الكتابة على الفيديو، ويكتب الكابشن. إذا أضفت أكثر من مفتاح مجاني تنتقل الأداة تلقائيا للتالي عند انتهاء حصة ما قبله، بهذا الترتيب.</p>
       <div class="row">
+        <div style="margin-bottom:14px">
+          <div class="row" style="align-items:center;margin-bottom:6px">
+            <h3 style="font-size:15px;margin:0" class="grow">حالة الذكاء الاصطناعي</h3>
+            <button class="btn sm" id="ai-probe">افحص الحصص الآن</button>
+          </div>
+          <div id="ai-status" class="muted small">—</div>
+        </div>
         <div class="field"><label>الذكاء الاصطناعي الأساسي (يُجرَّب أولا، والباقي احتياط)</label><select data-set="ai_provider"><option value="groq">Groq</option><option value="gemini">Gemini</option><option value="mistral">Mistral</option><option value="openrouter">OpenRouter</option><option value="cerebras">Cerebras</option><option value="claude">Claude</option></select></div>
         <div class="field"><label>1. Gemini (مجاني) — <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></label><input data-key="GEMINI_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
         <div class="field"><label>2. Mistral (مجاني) — <a href="https://console.mistral.ai/api-keys" target="_blank" rel="noopener">console.mistral.ai/api-keys</a></label><input data-key="MISTRAL_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
@@ -783,8 +794,7 @@ let state = null;
 function render() {
   const s = state;
   $("#chips").replaceChildren(
-    el("span", { class: "chip " + (s.ai.length ? "on" : "off"), title: s.ai.map(n => AI_NAMES[n]).join(" ← "),
-                 text: s.ai.length ? AI_NAMES[s.ai[0]] + (s.ai.length > 1 ? " +" + (s.ai.length - 1) : "") : "بلا ذكاء اصطناعي" }),
+    aiChip(s),
     ...Object.entries(PLATFORMS).map(([k, name]) =>
       el("span", { class: "chip " + (s.connected[k] ? (s.enabled.includes(k) ? "on" : "") : "off"),
                    text: name + (s.connected[k] ? (s.enabled.includes(k) ? "" : " (موقوف)") : " غير مربوط") })));
@@ -804,6 +814,8 @@ function render() {
 
   const msgs = [];
   if (!s.ai.length) msgs.push("لم يُضبط مفتاح ذكاء اصطناعي: المقاطع ستُختار من الصوت فقط.");
+  else if ((s.ai_status || []).length && s.ai_status.every(x => ["exhausted", "rejected"].includes(x.state)))
+    msgs.push("كل مفاتيح الذكاء الاصطناعي متوقفة الآن (انتهت حصصها أو رُفضت): الاختيار والترجمة والكابشن تعمل بالطريقة البسيطة حتى تعود. التفاصيل في الإعدادات ← حالة الذكاء الاصطناعي.");
   if (!s.publisher.has_account) msgs.push("لا يوجد حساب مربوط: المقاطع ستُصنع وتبقى في الطابور دون نشر.");
   const bsig = msgs.join("|");
   if ($("#banner").dataset.sig !== bsig) {
@@ -818,6 +830,7 @@ function render() {
   renderQueue(s);
   renderSchedule(s);
   renderPosts(s);
+  if ($("#tab-settings").classList.contains("active")) renderAiStatus(s.ai_status, s.publisher.now);
 
   $("#encoder").textContent = "الترميز: " + (s.encoder === "libx264" ? "المعالج" : "كرت الشاشة (" + s.encoder.replace("h264_", "") + ")");
   $("#clear-queue").hidden = !s.queue.length;
@@ -913,9 +926,12 @@ function renderQueue(s) {
     status = wait > 0 ? "المنشور التالي " + fromNow(p.next_post_at, p.now) + "." : "المنشور التالي خلال لحظات.";
   }
   $("#pubstatus").textContent = status;
-  keyed($("#queue"), s.queue, c => c.name, c => JSON.stringify([c.title, c.seconds, c.viral]),
+  keyed($("#queue"), s.queue, c => c.name, c => JSON.stringify([c.title, c.seconds, c.viral, c.cover]),
     c => el("div", { class: "item" }, [
       el("div", { class: "top" }, [
+        c.cover ? el("img", { class: "cover", alt: "الغلاف", title: "الغلاف (اضغط للتكبير)",
+          src: "/media?name=" + encodeURIComponent(c.cover) + "&in=inbox&t=" + encodeURIComponent(TOKEN),
+          onclick: e => window.open(e.target.src, "_blank") }) : null,
         el("div", { class: "title" }, [
           el("div", { class: "name", text: c.title }),
           el("div", { class: "muted small ltr", text: fmtDur(c.seconds) + "  ·  " + c.name })]),
@@ -1312,6 +1328,43 @@ $("#v-rescore").addEventListener("click", async () => {
   try { renderViral(await api("/api/virality", { name: vName, rescore: true })); refresh(); }
   catch (e) { $("#vbody").replaceChildren(note(e.message, "bad")); }
   b.disabled = false;
+});
+
+// ---------------------------------------------------------------- AI status
+const AI_STATE = { ok: ["ok", "يعمل"], exhausted: ["warn", "انتهت الحصة"], rejected: ["bad", "المفتاح مرفوض"],
+  error: ["warn", "خطأ مؤقت"], unknown: ["", "لم يُستعمل بعد"] };
+function aiChip(s) {
+  const st = s.ai_status || [];
+  if (!s.ai.length) return el("span", { class: "chip off", text: "بلا ذكاء اصطناعي" });
+  const usable = st.filter(x => !["exhausted", "rejected"].includes(x.state));
+  const first = usable[0] || st[0];
+  const down = st.length - usable.length;
+  const cls = !usable.length ? "off" : down ? "warn" : "on";
+  return el("span", { class: "chip " + cls, style: "cursor:pointer",
+    title: st.map(x => AI_NAMES[x.name] + ": " + AI_STATE[x.state][1]).join("\n"),
+    text: !usable.length ? "الذكاء الاصطناعي متوقف" : AI_NAMES[first.name] + (down ? " (" + down + " منتهٍ)" : usable.length > 1 ? " +" + (usable.length - 1) : ""),
+    onclick: () => { openTab("settings"); setTimeout(() => $("#ai-status").scrollIntoView({ behavior: "smooth", block: "center" }), 200); } });
+}
+function renderAiStatus(list, now) {
+  if (!list || !list.length) { $("#ai-status").textContent = "لا توجد مفاتيح."; return; }
+  const ago = t => t ? fromNow(t, now) : "";
+  $("#ai-status").replaceChildren(...list.map((x, i) => {
+    const [cls, label] = AI_STATE[x.state] || ["", x.state];
+    const bits = [];
+    if (i === 0) bits.push("الأساسي");
+    if (x.state === "exhausted" && x.until) bits.push("تعود " + fromNow(x.until, now));
+    if (x.ok_at) bits.push("آخر نجاح " + ago(x.ok_at));
+    if (x.uses) bits.push(x.uses + " طلبا اليوم");
+    return el("div", { class: "slot" }, [
+      el("span", {}, [el("b", { text: AI_NAMES[x.name] || x.name }), " ", el("span", { class: "badge " + cls, text: label })]),
+      el("span", { class: "muted", title: x.message || "", text: bits.join(" · ") || (x.message ? x.message.slice(0, 80) : "") })]);
+  }));
+}
+$("#ai-probe").addEventListener("click", async () => {
+  const b = $("#ai-probe"); b.disabled = true; b.textContent = "يفحص…";
+  try { const r = await api("/api/ai/probe", {}); renderAiStatus(r.status, Date.now() / 1000); refresh(); }
+  catch (e) { toast(e.message, "bad"); }
+  b.disabled = false; b.textContent = "افحص الحصص الآن";
 });
 
 // ---------------------------------------------------------------- insights

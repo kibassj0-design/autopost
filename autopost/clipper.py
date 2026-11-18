@@ -481,6 +481,7 @@ SCHEMA = {
             "title": {"type": "string"}, "hook": {"type": "string"},
             "what_happens": {"type": "string"}, "score": {"type": "integer"},
             "overlay_ar": {"type": "string"}, "overlay_en": {"type": "string"},
+            "cover_ar": {"type": "string"}, "cover_en": {"type": "string"},
         },
         "required": ["start", "end", "title", "hook", "what_happens", "score"],
         "additionalProperties": False,
@@ -542,7 +543,10 @@ order the list best first. Write title, hook and what_happens in the language sp
 the video. Also write `overlay_ar` and `overlay_en`: the same short on-screen headline (3-7 \
 words, may end with one emoji) shown at the top of the clip in its first seconds to make \
 people stay, in Modern Standard Arabic and in English. It teases the payoff without \
-spoiling or lying (e.g. "انتظر النهاية 😭", "He did NOT expect this 😳")."""
+spoiling or lying (e.g. "انتظر النهاية 😭", "He did NOT expect this 😳"). And \
+`cover_ar` / `cover_en`: the text of the clip's cover picture, like a YouTube thumbnail: \
+2-4 words, huge and punchy, the emotion or the event (e.g. "صدمة العمر 😱", "أغرب نهاية", \
+"HE LOST IT", "INSANE CLUTCH"); English in capitals."""
 
 
 def _transcript_text(segments, marks=None):
@@ -1102,26 +1106,29 @@ def cover_time(src, start, end, peak=None):
     return best
 
 
-def make_cover(src, t, chain, size, texts, font, out_png):
-    """A cover picture: the chosen frame in the clip's own framing, a little punchier,
-    darkened behind a big two-language headline."""
+def make_cover(src, t, chain, size, texts, font, out_png, text_y=None):
+    """A cover picture like a good thumbnail: the chosen frame in the clip's own framing,
+    punchier colours and a vignette, a huge slightly tilted Arabic headline with a thick
+    outline, and the English one in black on a yellow band under it."""
     tw, th = size
     vertical = th > tw
     ar, en = (texts + ["", ""])[:2]
     ass = out_png.with_suffix(".cover.ass")
     lines = _ass_header(font, 80, 100, tw, th, 4, 2)
-    fs_ar, fs_en = (118, 64) if vertical else (92, 52)
+    longest = max(len(ar), 1)
+    fs_ar = int((150 if vertical else 110) * min(1.0, 14 / longest))  # long text: smaller
+    fs_en = 78 if vertical else 56
     i = lines.index("[Events]") - 1
     lines.insert(i, f"Style: CovAr,{font},{fs_ar},&H00FFFFFF,&H00FFFFFF,&H00000000,"
-                    f"&H99000000,-1,0,0,0,100,100,0,0,1,{max(6, fs_ar // 12)},5,5,70,70,0,1")
-    lines.insert(i + 1, f"Style: CovEn,{font},{fs_en},&H0000E5FF,&H0000E5FF,&H00000000,"
-                        f"&H99000000,-1,0,0,0,100,100,0,0,1,{max(4, fs_en // 12)},4,5,70,70,0,1")
-    y = int(th * (0.42 if vertical else 0.45))
+                    f"&HAA000000,-1,0,0,0,100,100,0,-3,1,{max(8, fs_ar // 10)},7,5,60,60,0,1")
+    lines.insert(i + 1, f"Style: CovEn,{font},{fs_en},&H00000000,&H00000000,&H0000E5FF,"
+                        f"&H0000E5FF,-1,0,0,0,100,100,1,-3,3,14,0,5,60,60,0,1")
+    y = int(text_y if text_y else th * (0.30 if vertical else 0.40))
     if ar:
         text = RLM + _clean(ar) + RLM
         lines.append(f"Dialogue: 0,0:00:00.00,0:00:05.00,CovAr,,0,0,0,,{{\\pos({tw // 2},{y})}}{text}")
     if en:
-        y2 = y + (fs_ar if ar else 0) + 40
+        y2 = y + (int(fs_ar * 0.9) if ar else 0) + 36
         lines.append(f"Dialogue: 0,0:00:00.00,0:00:05.00,CovEn,,0,0,0,,{{\\pos({tw // 2},{y2})}}"
                      + _clean(en))
     ass.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1133,8 +1140,8 @@ def make_cover(src, t, chain, size, texts, font, out_png):
             sub += ":fontsdir=" + os.path.relpath(fonts, out_png.parent).replace("\\", "/")
         except ValueError:
             pass
-    graph = (chain + ",eq=contrast=1.08:saturation=1.25:brightness=-0.06,vignette=PI/4,"
-             + sub + ",setsar=1[v]")
+    graph = (chain + ",eq=contrast=1.12:saturation=1.35:brightness=-0.04,unsharp=5:5:0.8,"
+             "vignette=PI/4," + sub + ",setsar=1[v]")
     code, err = _ffmpeg(["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.3f}", "-i",
                          str(Path(src).resolve()), "-filter_complex", graph, "-map", "[v]",
                          "-frames:v", "1", out_png.name], out_png.parent)
@@ -1326,8 +1333,12 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
             texts = [clip.get("cover_ar") or "", clip.get("cover_en") or ""]
             if any(texts):
                 t = cover_time(src, start, end, clip.get("peak"))
+                seam = int(th * SPLIT_CAM) if cam is not None else None  # between cam and game
                 cover = make_cover(src, t, chain, (tw, th), texts, c["caption_font"],
-                                   out.with_suffix(".cover.png"))
+                                   out.with_suffix(".cover.png"), seam)
+                if not out.name.endswith(".alt.mp4"):  # a preview for the app's queue
+                    video._run(["ffmpeg", "-y", "-v", "error", "-i", str(cover), "-vf",
+                                "scale=360:-2", "-q:v", "4", str(out.with_suffix(".jpg"))])
         except Exception as e:  # a nicety: never lose a clip over it
             log.info("Cover skipped (%s)", str(e)[:160])
             cover = None
@@ -1839,8 +1850,10 @@ def _finish(src, meta, cfg, work, tell, queue, part, c, info, remote, segments, 
         lang = caption_target(spoken, c["captions_language"]) if spoken else "ar"
         c_clip["overlay"] = clip.get("overlay_ar" if lang == "ar" else "overlay_en") or ""
         # cover headline: Arabic big, English under it (the clip title when no headline)
-        c_clip["cover_ar"] = clip.get("overlay_ar") or (clip["title"] if spoken == "ar" else "")
-        c_clip["cover_en"] = clip.get("overlay_en") or (clip["title"] if spoken == "en" else "")
+        c_clip["cover_ar"] = clip.get("cover_ar") or clip.get("overlay_ar") or \
+            (clip["title"] if spoken == "ar" else "")
+        c_clip["cover_en"] = clip.get("cover_en") or clip.get("overlay_en") or \
+            (clip["title"] if spoken == "en" else "")
         with _heavy(tell, "render"):
             layout = render(c_src, c_info, c_clip, c_caps, out, c, cfg["orientation"],
                             cfg["fps"])
@@ -1863,6 +1876,8 @@ def _finish(src, meta, cfg, work, tell, queue, part, c, info, remote, segments, 
         if queue:
             inbox.mkdir(exist_ok=True)
             (inbox / out.with_suffix(".txt").name).write_text(note, encoding="utf-8")
+            if out.with_suffix(".jpg").exists():
+                shutil.move(out.with_suffix(".jpg"), inbox / out.with_suffix(".jpg").name)
             # Land the video under a name the watcher ignores, then rename in one step.
             if alt:
                 shutil.move(alt, inbox / alt.name)
@@ -2002,7 +2017,11 @@ def catch_up(info, cfg, work, tell, queue, begin, until):
         if done and (sub / done["file"]).exists():
             src, meta, chat = sub / done["file"], done["meta"], done["chat"]
         else:
-            src, meta, chat = download(vod, sub, max_height, begin, until, tell)
+            # The past broadcast of a stream that is still on is itself marked "live";
+            # its first part is already recorded, so it is read like a finished video.
+            vod_info = probe_url(vod)
+            vod_info.update(is_live=False, live_status="was_live")
+            src, meta, chat = download(vod, sub, max_height, begin, until, tell, vod_info)
             _save_state(sub / "download.json", {"file": src.name, "meta": meta, "chat": chat})
     elif "youtube" in host:
         # YouTube keeps the start of a live stream: read it from the start, this stretch only.

@@ -68,6 +68,88 @@ def provider(cfg):
     return names[0] if names else None
 
 
+# ---------------------------------------------------------------- status, for the app
+
+STATUS = {}  # provider -> {"state", "message", "ok_at", "until", "uses", "day"}
+
+
+def _spent(table, key):
+    until = table.get(key)
+    if until is None:
+        return False
+    if time.time() >= until:
+        table.pop(key, None)  # the quota is back
+        return False
+    return True
+
+
+def _pacific_midnight():
+    """When Gemini's free daily quota resets (midnight, US Pacific time)."""
+    from datetime import datetime, timedelta, timezone
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("America/Los_Angeles")
+    except Exception:
+        tz = timezone(timedelta(hours=-8))
+    now = datetime.now(tz)
+    nxt = (now + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0)
+    return nxt.timestamp()
+
+
+def _note(who, state, message="", until=None):
+    st = STATUS.setdefault(who, {"uses": 0, "day": time.strftime("%Y-%m-%d")})
+    if st["day"] != time.strftime("%Y-%m-%d"):
+        st.update(uses=0, day=time.strftime("%Y-%m-%d"))
+    st.update(state=state, message=message[:300], until=until, at=time.time())
+    if state == "ok":
+        st["ok_at"] = time.time()
+        st["uses"] += 1
+
+
+def _classify(who, err):
+    text = str(err)
+    if who in _dead or re.search(r"rejected|غير صالح|invalid|401|403|API key", text, re.I):
+        return "rejected", None
+    if re.search(r"quota|used up|exhausted|per day|TPD|RPD|429", text, re.I):
+        if who == "gemini":
+            return "exhausted", _pacific_midnight()
+        spent = [u for (n, _), u in _compat_spent.items() if n == who]
+        return "exhausted", min(spent) if spent else time.time() + 3600
+    return "error", None
+
+
+def status(cfg):
+    """[{name, state, message, ok_at, until, uses}] for every service with a key, in
+    the order they are tried. state: ok, exhausted, rejected, error, unknown."""
+    out = []
+    for name in providers(cfg):
+        st = dict(STATUS.get(name, {}))
+        if st.get("state") == "exhausted" and st.get("until") and time.time() >= st["until"]:
+            st["state"] = "unknown"  # the quota should be back by now
+        out.append({"name": name, "state": st.get("state", "unknown"),
+                    "message": st.get("message", ""), "ok_at": st.get("ok_at"),
+                    "until": st.get("until"), "uses": st.get("uses", 0)})
+    return out
+
+
+def probe(cfg):
+    """A tiny real request to each service, to see right now which ones answer."""
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    for name in providers(cfg):
+        try:
+            if name == "claude":
+                _claude('Answer {"ok": true}.', "ok", schema, cfg, (), "low", 50)
+            elif name == "gemini":
+                _gemini('Answer {"ok": true}.', "ok", schema, cfg, (), "low", 50)
+            else:
+                _compat(name, 'Answer {"ok": true}.', "ok", schema, cfg)
+            _note(name, "ok")
+        except Exception as e:
+            state, until = _classify(name, e)
+            _note(name, state, str(e), until)
+    return status(cfg)
+
+
 def ask_json(system, text, schema, cfg, images=(), effort="medium", max_tokens=32000):
     """Returns (parsed object, provider name). Each configured service is tried in turn,
     so one running out of free quota just hands over to the next."""
@@ -86,9 +168,12 @@ def ask_json(system, text, schema, cfg, images=(), effort="medium", max_tokens=3
             else:
                 data = _compat(who, system, text, schema, cfg)
             _validate(data, schema, "answer")
+            _note(who, "ok")
             return data, who
         except LLMError as e:
             problems.append(f"{who}: {e}")
+            state, until = _classify(who, e)
+            _note(who, state, str(e), until)
             if who != names[-1]:
                 log.warning("%s could not answer (%s); trying the next AI service",
                             who, str(e)[:160])
@@ -156,7 +241,7 @@ def _claude(system, text, schema, cfg, images, effort, max_tokens):
 # ---------------------------------------------------------------- Gemini
 
 _gemini_models = None
-_gemini_spent = set()  # models whose quota ran out during this run
+_gemini_spent = {}  # model -> time its daily quota comes back
 
 
 def _version(name):
@@ -228,7 +313,7 @@ def _gemini(system, text, schema, cfg, images, effort, max_tokens):
     headers = {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}
     problems = []
     for model in gemini_models(cfg):
-        if model in _gemini_spent:
+        if _spent(_gemini_spent, model):
             continue
         url = f"{GEMINI_API}/models/{model}:generateContent"
         for attempt in range(2):
@@ -251,7 +336,7 @@ def _gemini(system, text, schema, cfg, images, effort, max_tokens):
                 continue
             if r.status_code >= 400:  # daily quota used up, model retired, ...: next model
                 if r.status_code == 429:
-                    _gemini_spent.add(model)
+                    _gemini_spent[model] = _pacific_midnight()
                     log.info("Gemini %s quota is used up; trying the next model", model)
                 problems.append(f"{model}: HTTP {r.status_code} {r.text[:120]}")
                 break
@@ -270,7 +355,7 @@ def _gemini(system, text, schema, cfg, images, effort, max_tokens):
 # ---------------------------------------------------------------- OpenAI-compatible
 
 _compat_models = {}
-_compat_spent = set()  # (provider, model) pairs whose quota ran out during this run
+_compat_spent = {}  # (provider, model) -> time its quota comes back
 
 
 def compat_models(name, cfg):
@@ -316,7 +401,7 @@ def _compat(name, system, text, schema, cfg):
     headers = {"Authorization": f"Bearer {os.environ[key_var]}"}
     problems = []
     for model in compat_models(name, cfg):
-        if (name, model) in _compat_spent:
+        if _spent(_compat_spent, (name, model)):
             continue
         body = {"model": model, "response_format": {"type": "json_object"},
                 "messages": [{"role": "system", "content": instructions},
@@ -348,7 +433,7 @@ def _compat(name, system, text, schema, cfg):
                     continue
             if r.status_code >= 400:  # quota used up, input too long for this model, retired...
                 if r.status_code == 429:
-                    _compat_spent.add((name, model))
+                    _compat_spent[(name, model)] = time.time() + 6 * 3600
                 problems.append(f"{model}: HTTP {r.status_code} {r.text[:120]}")
                 break
             try:

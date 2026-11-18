@@ -90,7 +90,7 @@ class Publisher:
         path = self.inbox / Path(name).name  # the name only: never leave inbox/
         if path.name == self.current:
             raise RuntimeError("This clip is being published right now")
-        for extra in ("", ".txt", ".alt.mp4"):
+        for extra in ("", ".txt", ".alt.mp4", ".jpg"):
             (path.with_suffix(extra) if extra else path).unlink(missing_ok=True)
 
     def _scored(self, path):
@@ -217,6 +217,9 @@ class Publisher:
             self.failures = 0
         if note_file.exists() and target is not self.inbox:
             shutil.move(note_file, target / note_file.name)
+        cover = path.with_suffix(".jpg")
+        if cover.exists() and target is not self.inbox:
+            cover.unlink(missing_ok=True)  # the cover is inside the video; the preview goes
         self._sizes.pop(path, None)
         self.current = None
 

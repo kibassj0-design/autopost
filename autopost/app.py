@@ -428,7 +428,9 @@ class App:
                 first = note.read_text(encoding="utf-8").splitlines()[:1]
                 title = first[0].removeprefix("Clip title: ") if first else ""
             clips.append({"name": p.name, "title": title or p.stem,
-                          "seconds": self._duration(p), "viral": pub.scores.get(p.name)})
+                          "seconds": self._duration(p), "viral": pub.scores.get(p.name),
+                          "cover": p.with_suffix(".jpg").name
+                          if p.with_suffix(".jpg").exists() else ""})
         db = store.connect()
         posts = [dict(r) for r in db.execute(
             "SELECT p.id, p.platform, p.url, p.error, p.published_at, v.title, v.parent_id,"
@@ -464,6 +466,7 @@ class App:
             "accounts": accounts,
             "enabled": self.cfg["platforms"],
             "ai": llm.providers(self.cfg),
+            "ai_status": llm.status(self.cfg),
             "encoder": video.encoder()[0],
             "schedule": self.schedule_list(),
             "update": {k: v for k, v in self.update.items()},
@@ -854,6 +857,8 @@ def make_handler(app):
                             "الإشعارات تعمل. ستصلك هنا عند نشر كل مقطع أو فشله.", wait=True)
             elif path == "/api/notify/telegram":
                 return {"name": notify.telegram_find_chat()}
+            elif path == "/api/ai/probe":
+                return {"status": llm.probe(app.cfg)}
             elif path == "/api/insights":
                 db = store.connect()
                 try:
