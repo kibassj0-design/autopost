@@ -16,7 +16,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import backup, checks, config, llm, store, timing, updater, video, virality
+from . import backup, checks, config, llm, notify, store, timing, updater, video, virality
 from .platforms import tiktok, youtube
 from .publisher import Publisher
 
@@ -25,7 +25,7 @@ log = logging.getLogger("autopost")
 PORT = 8765  # also the YouTube sign-in redirect, so the app can finish that login itself
 SECRET_KEYS = ["FB_APP_SECRET", "GEMINI_API_KEY", "MISTRAL_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY",
                "CEREBRAS_API_KEY", "ANTHROPIC_API_KEY", "YT_CLIENT_SECRET", "IG_ACCESS_TOKEN",
-               "TT_CLIENT_SECRET"]
+               "TT_CLIENT_SECRET", "TG_BOT_TOKEN"]
 PLAIN_KEYS = ["FB_APP_ID", "FB_CONFIG_ID", "YT_CLIENT_ID", "IG_USER_ID", "IG_GRAPH_HOST", "TT_CLIENT_KEY",
               "TT_REDIRECT_URI"]
 # Settings the page may change: name -> type (nested ones as "section.name").
@@ -36,7 +36,10 @@ SETTINGS = {
     "clipper.min_score": int, "clipper.min_seconds": int, "clipper.max_seconds": int,
     "clipper.whisper_model": str, "clipper.whisper_device": str, "clipper.captions": bool,
     "clipper.captions_language": str, "clipper.caption_style": str, "clipper.layout": str,
-    "clipper.title_overlay": bool,
+    "clipper.title_overlay": bool, "clipper.jump_cuts": bool,
+    "notify.enabled": bool, "notify.ntfy": bool, "notify.on_posted": bool,
+    "notify.on_failed": bool, "notify.on_clips": bool, "notify.on_momentum": bool,
+    "notify.on_paused": bool,
     "momentum.enabled": bool, "momentum.views_per_hour": int,
     "virality.enabled": bool, "virality.ai_judge": bool, "virality.best_first": bool,
     "virality.min_score": int,
@@ -167,6 +170,13 @@ class App:
                 job["title"] = detail
             elif stage == "live":
                 job["live"], job["detail"] = True, detail
+                m = re.search(r"(\d+) clips", detail or "")
+                made = int(m.group(1)) if m else 0
+                if made > job.get("notified", 0):
+                    notify.send(self.cfg, "clips", "مقاطع جديدة من البث",
+                                f"{job['title'] or 'البث المباشر'}: {made} مقطع حتى الآن، "
+                                f"آخرها دخل طابور النشر.")
+                    job["notified"] = made
             elif stage == "render":
                 job["detail"] = detail
 
@@ -176,11 +186,16 @@ class App:
                                 progress=progress, stop=self.stops[job["id"]],
                                 cancel=self.cancels[job["id"]])
             result = dict(status="done", stage="done", fraction=1, clips=len(clips))
+            if clips and not job.get("live"):
+                notify.send(self.cfg, "clips", "مقاطع جديدة جاهزة",
+                            f"{job['title'] or job['url']}: {len(clips)} مقطع في طابور النشر.")
         except clipper.Cancelled:
             result = dict(status="cancelled", stage="cancelled")
         except Exception as e:
             log.error("Could not process %s: %s", job["url"], e)
             result = dict(status="error", error=str(e)[:400])
+            notify.send(self.cfg, "failed", "تعذّر صنع المقاطع",
+                        f"{job['title'] or job['url']}: {str(e)[:200]}")
         job["ended"] = time.time()
         if job["stage"] in TIMED:  # close the last step's timing
             job["timings"][job["stage"]] = round(
@@ -739,6 +754,18 @@ def make_handler(app):
                     return virality.accuracy(db)
                 finally:
                     db.close()
+            elif path == "/api/notify/info":
+                t = notify.topic(app.cfg)
+                return {"topic": t, "url": f"{notify.NTFY}/{t}",
+                        "telegram": bool(os.environ.get("TG_BOT_TOKEN")),
+                        "telegram_chat": bool(os.environ.get("TG_CHAT_ID"))}
+            elif path == "/api/notify/test":
+                if not app.cfg.get("notify", {}).get("enabled"):
+                    raise ValueError("فعّل الإشعارات أولا ثم احفظ.")
+                notify.send(app.cfg, "posted", "تجربة من autopost",
+                            "الإشعارات تعمل. ستصلك هنا عند نشر كل مقطع أو فشله.", wait=True)
+            elif path == "/api/notify/telegram":
+                return {"name": notify.telegram_find_chat()}
             elif path == "/api/insights":
                 db = store.connect()
                 try:

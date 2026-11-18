@@ -490,6 +490,7 @@
       </div>
       <div class="toggle"><input type="checkbox" id="cap" data-set="clipper.captions"><label for="cap">اكتب الكلام على الفيديو</label></div>
       <div class="toggle"><input type="checkbox" id="ovl" data-set="clipper.title_overlay"><label for="ovl">عنوان جذاب أعلى المقطع في أول 4 ثوان (يشد المشاهد ليكمل)</label></div>
+      <div class="toggle"><input type="checkbox" id="jcut" data-set="clipper.jump_cuts"><label for="jcut">قص الصمت داخل المقطع (الثواني الميتة بلا كلام ولا صوت)، حتى يبقى سريعا</label></div>
     </div>
 
     <div class="card">
@@ -518,6 +519,42 @@
       <div class="toggle"><input type="checkbox" id="smart" data-set="smart_timing.enabled"><label for="smart">في أوقات الذروة انشر المقطع التالي فورا بدون انتظار الفاصل المعتاد</label></div>
       <div class="toggle"><input type="checkbox" id="peaksonly" data-set="smart_timing.peaks_only"><label for="peaksonly">انشر من الطابور في أوقات الذروة فقط (المجدولة تُنشر في موعدها دائما)</label></div>
       <div class="row"><div class="field small"><label>أقل فاصل بين منشورين في الذروة (دقيقة)</label><input data-set="smart_timing.peak_gap_minutes" type="number" min="15"></div></div>
+    </div>
+
+    <div class="card">
+      <h2>إشعارات على هاتفك</h2>
+      <p class="muted small" style="margin-top:-4px">يصلك إشعار عند نشر كل مقطع (مع الرابط)، أو فشل النشر، أو جهوز مقاطع جديدة، أو انتشار مقطع.</p>
+      <div class="toggle"><input type="checkbox" id="nt-on" data-set="notify.enabled"><label for="nt-on">شغّل الإشعارات</label></div>
+      <div class="row" style="flex-wrap:wrap;gap:4px 0">
+        <div class="toggle"><input type="checkbox" id="nt-p" data-set="notify.on_posted"><label for="nt-p">عند النشر</label></div>
+        <div class="toggle"><input type="checkbox" id="nt-f" data-set="notify.on_failed"><label for="nt-f">عند الفشل</label></div>
+        <div class="toggle"><input type="checkbox" id="nt-c" data-set="notify.on_clips"><label for="nt-c">مقاطع جديدة جاهزة</label></div>
+        <div class="toggle"><input type="checkbox" id="nt-m" data-set="notify.on_momentum"><label for="nt-m">مقطع ينتشر 🔥</label></div>
+        <div class="toggle"><input type="checkbox" id="nt-s" data-set="notify.on_paused"><label for="nt-s">توقف النشر</label></div>
+      </div>
+      <h3 style="font-size:15px;margin:14px 0 6px">الطريقة 1 (الأسهل): تطبيق ntfy المجاني</h3>
+      <div class="toggle"><input type="checkbox" id="nt-n" data-set="notify.ntfy"><label for="nt-n">أرسل عبر ntfy</label></div>
+      <ol class="steps">
+        <li>ثبّت تطبيق <b>ntfy</b> من Google Play أو App Store (مجاني، بدون حساب).</li>
+        <li>في التطبيق اضغط <b>+</b> واكتب اسم القناة أدناه بالضبط، ثم <b>Subscribe</b>. أو امسح الرمز بكاميرا الهاتف.</li>
+      </ol>
+      <div class="row" style="align-items:center;gap:16px">
+        <div id="nt-qr" style="background:#fff;padding:8px;border-radius:10px;line-height:0"></div>
+        <div><div class="muted small">اسم القناة (خاص بك، لا تشاركه):</div><b class="ltr" id="nt-topic" style="font-size:17px;user-select:all"></b></div>
+      </div>
+      <h3 style="font-size:15px;margin:16px 0 6px">الطريقة 2: تيليجرام</h3>
+      <ol class="steps">
+        <li>في تيليجرام افتح <b>@BotFather</b> ← أرسل <b>/newbot</b> ← اختر اسما، وانسخ التوكن الذي يعطيك.</li>
+        <li>الصق التوكن هنا واحفظ، ثم افتح بوتك وأرسل له <b>/start</b>، ثم اضغط «ربط تيليجرام».</li>
+      </ol>
+      <div class="row">
+        <div class="field grow"><label>توكن البوت</label><input data-key="TG_BOT_TOKEN" dir="ltr" type="password" autocomplete="off"></div>
+        <div class="field small"><label>&nbsp;</label><button class="btn" id="nt-tg">ربط تيليجرام</button></div>
+      </div>
+      <div class="row" style="align-items:center;margin-top:6px">
+        <button class="btn primary" id="nt-test">أرسل إشعار تجربة</button>
+        <span class="muted small" id="nt-status"></span>
+      </div>
     </div>
 
     <div class="card">
@@ -586,6 +623,7 @@
 
 <div id="toasts"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
 <script>
 const TOKEN = "__TOKEN__";
 const $ = (s, r = document) => r.querySelector(s);
@@ -1282,6 +1320,34 @@ async function loadInsights() {
 }
 setInterval(() => { if ($("#tab-posts").classList.contains("active")) loadInsights(); }, 60000);
 if ($("#tab-posts").classList.contains("active")) loadInsights();
+
+// ---------------------------------------------------------------- notifications
+async function notifyInfo() {
+  try {
+    const i = await api("/api/notify/info", {});
+    $("#nt-topic").textContent = i.topic;
+    const box = $("#nt-qr");
+    if (!box.dataset.done && window.QRCode) {
+      box.replaceChildren();
+      new QRCode(box, { text: i.url, width: 120, height: 120 });
+      box.dataset.done = "1";
+    } else if (!window.QRCode) box.hidden = true;
+    if (i.telegram_chat) $("#nt-status").textContent = "تيليجرام مربوط.";
+  } catch (e) {}
+}
+$("#nt-test").addEventListener("click", async () => {
+  if (!await save(true)) return;
+  const b = $("#nt-test"); b.disabled = true;
+  try { await api("/api/notify/test", {}); toast("أُرسل إشعار التجربة. إذا لم يصل، تأكد من اسم القناة في تطبيق ntfy.", "ok"); }
+  catch (e) { toast(e.message, "bad"); }
+  b.disabled = false;
+});
+$("#nt-tg").addEventListener("click", async () => {
+  if (!await save(true)) return;
+  try { const r = await api("/api/notify/telegram", {}); toast("رُبط تيليجرام: " + r.name, "ok"); notifyInfo(); }
+  catch (e) { toast(e.message, "bad"); }
+});
+window.addEventListener("load", notifyInfo);  // after the QR code library has loaded
 
 // ---------------------------------------------------------------- backup
 async function backupInfo() {

@@ -280,6 +280,72 @@ def read_wav(wav):
     return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+def dead_air(wav, start, end, words, min_gap=0.7, pad=0.12):
+    """Parts of [start, end] to keep once the dead air is cut out: stretches of at least
+    `min_gap` seconds with no word spoken and the sound near silence. Game sound, music
+    or noise is not dead air, so a gameplay pause full of action is kept. Returns
+    [(a, b)] on the source clock, or None when nothing worth cutting was found."""
+    import numpy as np
+
+    with wave.open(str(wav)) as w:
+        rate = w.getframerate()
+        a0 = max(0, int(start * rate))
+        w.setpos(min(a0, w.getnframes()))
+        raw = w.readframes(max(0, int((end - start) * rate)))
+    x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768
+    step = rate // 20  # 50 ms
+    if len(x) < step * 20:
+        return None
+    frames = x[: len(x) // step * step].reshape(-1, step)
+    db = 20 * np.log10(np.sqrt((frames ** 2).mean(axis=1)) + 1e-7)
+    loud = np.percentile(db, 90)
+    quiet = (db < max(loud - 28, -50)) | (db < -50)
+    for w_ in words:  # a word is never cut, however softly it is said
+        i, j = int((w_["start"] - start) * 20), int((w_["end"] - start) * 20) + 1
+        quiet[max(0, i - 2):max(0, j + 2)] = False
+    gaps, i, n = [], 0, len(quiet)
+    while i < n:
+        if quiet[i]:
+            j = i
+            while j < n and quiet[j]:
+                j += 1
+            if (j - i) / 20 >= min_gap and i > 0 and j < n:  # not at the very ends
+                gaps.append((start + i / 20 + pad, start + j / 20 - pad))
+            i = j
+        else:
+            i += 1
+    removed = sum(b - a for a, b in gaps)
+    if removed < 0.8 or removed > 0.4 * (end - start):
+        return None  # nothing worth it, or something odd: keep the clip as it is
+    keep, cur = [], start
+    for a, b in gaps:
+        keep.append((cur, a))
+        cur = b
+    keep.append((cur, end))
+    return [(round(a, 3), round(b, 3)) for a, b in keep if b - a > 0.05]
+
+
+def remap(t, keep):
+    """A source time -> its time in the clip after the cuts (seconds from the clip start)."""
+    out = 0.0
+    for a, b in keep:
+        if t <= a:
+            return out
+        if t < b:
+            return out + t - a
+        out += b - a
+    return out
+
+
+def remap_segments(segments, keep):
+    """Caption segments moved onto the cut clip's clock (kept relative to keep[0][0])."""
+    base = keep[0][0]
+    f = lambda t: base + remap(t, keep)
+    return [{**x, "start": f(x["start"]), "end": f(x["end"]),
+             "words": [{**w, "start": f(w["start"]), "end": f(w["end"])}
+                       for w in x.get("words") or []]} for x in segments]
+
+
 _MODELS = {}
 
 
@@ -1142,6 +1208,29 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
         chain = video.fit_filter(meta, tw, th)
         if not matches:
             layout = "blurred fill"
+    keep = clip.get("keep") if c.get("jump_cuts", True) else None
+    cut_graph, length = "", end - start
+    if keep and len(keep) > 1:
+        # Cut the dead air out first; everything after works on the shorter clip.
+        n = len(keep)
+        parts = ["[0:v]split=" + str(n) + "".join(f"[sv{i}]" for i in range(n)) + ";"]
+        if meta["acodec"]:
+            parts.append("[0:a]asplit=" + str(n) + "".join(f"[sa{i}]" for i in range(n)) + ";")
+        for i, (a, b) in enumerate(keep):
+            a, b = a - start, b - start
+            parts.append(f"[sv{i}]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{i}];")
+            if meta["acodec"]:
+                parts.append(f"[sa{i}]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{i}];")
+        joined = "".join(f"[v{i}]" + (f"[a{i}]" if meta["acodec"] else "")
+                         for i in range(len(keep)))
+        cut_graph = "".join(parts) + joined + \
+            f"concat=n={len(keep)}:v=1:a={1 if meta['acodec'] else 0}" + \
+            ("[vc][ac];" if meta["acodec"] else "[vc];")
+        chain = chain.replace("[0:v]", "[vc]")
+        caption_segments = remap_segments(caption_segments, keep)
+        length = sum(b - a for a, b in keep)
+        end = start + length
+        layout += f", {len(keep) - 1} cuts"
     ass = out.with_suffix(".ass")
     has_ass = bool(c["captions"] and write_captions(
         caption_segments, start, end, ass, c["caption_font"], (tw, th),
@@ -1154,11 +1243,12 @@ def render(src, meta, clip, caption_segments, out, c, orientation, fps=60):
 
     cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.3f}", "-i", str(Path(src).resolve())]
     if meta["acodec"]:
-        graph = chain + ";[0:a]loudnorm=I=-14:TP=-1.5:LRA=11[a]"
+        audio_in = "[ac]" if cut_graph else "[0:a]"
+        graph = cut_graph + chain + f";{audio_in}loudnorm=I=-14:TP=-1.5:LRA=11[a]"
     else:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
-        graph = chain + ";[1:a]anull[a]"
-    cmd += ["-t", f"{end - start:.3f}", "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
+        graph = cut_graph + chain + ";[1:a]anull[a]"
+    cmd += ["-t", f"{length:.3f}", "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
             "-r", str(video.out_fps(meta, fps)), *video.encoder()[1],
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
             "-movflags", "+faststart", out.name]
@@ -1484,6 +1574,17 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
                 tell("warning", None, "no_translation: no translation service answered")
             elif "basic" in used:
                 tell("warning", None, "basic_translation: no AI service answered")
+    if wav is not None and c.get("jump_cuts", True):
+        for i, k in enumerate(clips):
+            try:
+                words = [w for x in clip_words[i] for w in x.get("words") or []]
+                k["keep"] = dead_air(wav, k["start"], k["end"], words)
+                if k["keep"]:
+                    cut = (k["end"] - k["start"]) - sum(b - a for a, b in k["keep"])
+                    log.info("Clip %d: %.1fs of dead air cut in %d place(s)", i + 1, cut,
+                             len(k["keep"]) - 1)
+            except Exception as e:  # a nicety: never lose a clip over it
+                log.info("Dead-air check skipped (%s)", str(e)[:100])
     if wav is not None:
         wav.unlink(missing_ok=True)
 
@@ -1503,6 +1604,8 @@ def _process(src, meta, chat, cfg, work, tell, queue, part, skip_before=0.0):
             file, offset = section
             c_src, c_info = file, video.probe(file)
             c_clip = {**clip, "start": clip["start"] - offset, "end": clip["end"] - offset}
+            if clip.get("keep"):
+                c_clip["keep"] = [(a - offset, b - offset) for a, b in clip["keep"]]
             c_caps = _shift(clip_caps[n - 1], offset)
             if n == 1 and min(c_info["width"], c_info["height"]) < 1000:
                 tell("warning", None, f"low_source: {c_info['width']}x{c_info['height']}")

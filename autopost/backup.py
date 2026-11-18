@@ -22,7 +22,7 @@ FILES = (".env", "config.json", "data/tokens.json", "data/autopost.db")
 KEEP_DAYS = 14
 # Only the tool's own keys are taken from a backup file, never other settings of the computer.
 KEY_PREFIXES = ("YT_", "FB_", "IG_", "TT_", "GEMINI_", "MISTRAL_", "OPENROUTER_", "GROQ_",
-                "CEREBRAS_", "ANTHROPIC_")
+                "CEREBRAS_", "ANTHROPIC_", "TG_", "NTFY_")
 
 
 def folder():

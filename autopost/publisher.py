@@ -6,7 +6,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, momentum, pipeline, store, timing
+from . import config, momentum, notify, pipeline, store, timing
 from .platforms import instagram
 
 log = logging.getLogger("autopost")
@@ -49,6 +49,10 @@ class Publisher:
         try:
             result = pipeline.retry(self._db, post_id, self.cfg, stop=self.cancel_flag.is_set)
             log.info("Retry of post %d: %s", post_id, result)
+            row = self._db.execute("SELECT p.platform, v.title FROM posts p JOIN videos v ON "
+                                   "v.id=p.video_id WHERE p.id=?", (post_id,)).fetchone()
+            if row:
+                self._tell(row["title"], {row["platform"]: result})
         except Exception as e:
             log.error("Retry of post %d: %s", post_id, e)
             store.update_post(self._db, post_id, error=str(e))
@@ -101,6 +105,26 @@ class Publisher:
         self._sizes[path] = size
         return done
 
+    def _tell(self, title, results):
+        """Notify the phone about one post: the links, or what failed."""
+        names = {"youtube": "يوتيوب", "instagram": "انستغرام", "tiktok": "تيك توك"}
+        ok = {p: r for p, r in results.items() if not str(r).startswith("FAILED")}
+        bad = {p: r for p, r in results.items() if str(r).startswith("FAILED")}
+        title = (title or "مقطع").splitlines()[0][:80]
+        if ok:
+            lines = []
+            for p, r in ok.items():
+                r = str(r)
+                lines.append(names.get(p, p) + ": " + ("في صندوق تيك توك، انشره من التطبيق"
+                                                       if r == "tiktok:inbox" else
+                                                       "خاص" if r == "tiktok:private" else r))
+            link = next((str(r) for r in ok.values() if str(r).startswith("http")), None)
+            notify.send(self.cfg, "posted", f"نُشر: {title}", "\n".join(lines), link)
+        if bad:
+            notify.send(self.cfg, "failed", f"فشل النشر: {title}", "\n".join(
+                f"{names.get(p, p)}: {str(r).replace('FAILED: ', '')[:160]}"
+                for p, r in bad.items()))
+
     def _publish(self, path):
         # An optional "<name>.txt" beside the video is the creator's note.
         note_file = path.with_suffix(".txt")
@@ -114,8 +138,9 @@ class Publisher:
         target = self.done
         try:
             self.cancel_flag.clear()
-            _, results, _ = pipeline.publish(kept, self.cfg, note=note, db=self._db,
-                                             stop=self.cancel_flag.is_set)
+            _, results, text = pipeline.publish(kept, self.cfg, note=note, db=self._db,
+                                                stop=self.cancel_flag.is_set)
+            self._tell(text.get("youtube", {}).get("title") or path.stem, results)
             if all(str(r).startswith("FAILED") for r in results.values()):
                 target = self.failed
         except pipeline.PublishCancelled:
@@ -131,6 +156,7 @@ class Publisher:
             return
         except Exception as e:
             log.error("%s: %s", path.name, e)
+            notify.send(self.cfg, "failed", "فشل النشر", f"{path.name}: {str(e)[:200]}")
             target = self.failed
         self.last_post = time.time()  # the gap applies after a failure too
         if target is self.failed:
@@ -146,6 +172,9 @@ class Publisher:
                 self.pause_reason = "failing"
                 log.error("Publishing paused: the last %d clips failed on every platform. "
                           "Check the accounts (Settings -> check), then resume.", self.failures)
+                notify.send(self.cfg, "paused", "توقف النشر",
+                            "آخر 3 مقاطع فشلت على كل المنصات، فأوقفت الأداة النشر. افحص "
+                            "الحسابات من الإعدادات ← فحص الإعداد، ثم اضغط «تشغيل النشر».")
             target = self.inbox
         else:
             self.failures = 0
@@ -166,10 +195,12 @@ class Publisher:
             platforms = [p for p in json.loads(row["platforms"] or "[]")
                          if config.connected(p)] or None
             self.cancel_flag.clear()
-            _, result, _ = pipeline.publish(path, self.cfg, note=row["note"] or "",
-                                            platforms=platforms, db=self._db,
-                                            own_caption=row["caption"],
-                                            stop=self.cancel_flag.is_set)
+            _, result, text = pipeline.publish(path, self.cfg, note=row["note"] or "",
+                                               platforms=platforms, db=self._db,
+                                               own_caption=row["caption"],
+                                               stop=self.cancel_flag.is_set)
+            self._tell(row["title"] or text.get("youtube", {}).get("title") or path.stem,
+                       result)
             if all(str(r).startswith("FAILED") for r in result.values()):
                 status = "failed"
         except pipeline.PublishCancelled:

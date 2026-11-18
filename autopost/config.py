@@ -44,6 +44,7 @@ DEFAULTS = {
         "caption_font": "Arial",
         "layout": "auto",
         "title_overlay": True,  # a short hook headline at the top in the first seconds
+        "jump_cuts": True,      # cut dead air (no speech, near silence) out of clips
         "max_height": 1080,
     },
     "virality": {
@@ -51,6 +52,11 @@ DEFAULTS = {
         "ai_judge": True,     # let the AI watch stills and read the speech (uses AI quota)
         "best_first": True,   # post the clip with the best chance first
         "min_score": 0,       # clips under this stay in the queue for you to decide (0 = off)
+    },
+    "notify": {
+        "enabled": False, "ntfy": True,
+        "on_posted": True, "on_failed": True, "on_clips": True, "on_momentum": True,
+        "on_paused": True,
     },
     "smart_timing": {
         "enabled": True,          # in a busy hour, post the next clip without the usual gap

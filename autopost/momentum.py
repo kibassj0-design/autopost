@@ -3,11 +3,12 @@ import logging
 import time
 from pathlib import Path
 
-from . import pipeline, store, video
+from . import notify, pipeline, store, video
 from .platforms import ALL
 
 log = logging.getLogger("autopost.momentum")
 _warned = set()
+_told = set()  # hot posts already announced on the phone
 
 
 def velocity(db, post, now_stats, now):
@@ -59,6 +60,14 @@ def check(cfg, db=None, dry_run=False, cut=True, boost=True):
             hot[post["video_id"]] = (post, rate)
 
     boosted = []
+    names = {"youtube": "يوتيوب", "instagram": "انستغرام", "tiktok": "تيك توك"}
+    for video_id, (post, rate) in hot.items():
+        if (post["platform"], post["id"]) not in _told:
+            _told.add((post["platform"], post["id"]))
+            notify.send(cfg, "momentum", "🔥 مقطع ينتشر الآن",
+                        f"{(post['title'] or '').splitlines()[0][:80]}\n"
+                        f"{names.get(post['platform'], post['platform'])}: "
+                        f"{rate:.0f} مشاهدة في الساعة", post["url"])
     if not boost:
         return boosted
     for video_id, (post, rate) in hot.items():
