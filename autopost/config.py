@@ -10,7 +10,7 @@ TOKENS = DATA / "tokens.json"
 DEFAULTS = {
     "platforms": ["youtube", "instagram", "tiktok"],
     "language": "ar",
-    "post_language": "swap",
+    "post_language": "both",  # post text in Arabic and English
     "ai_provider": "groq",  # tried first when its key is set; the others follow
     "gemini_model": "",
     "ai_models": {},
@@ -115,6 +115,8 @@ def load():
                 cfg[key].update(value)
             else:
                 cfg[key] = value
+    if cfg.get("ai_provider") in ("auto", "", None):
+        cfg["ai_provider"] = "groq"  # "auto" from older versions: Groq first
     DATA.mkdir(exist_ok=True)
     from . import video
     # "auto" from older versions now means the fixed 1080p default.

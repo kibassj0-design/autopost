@@ -36,7 +36,7 @@ COMPAT = {
     "cerebras": ("CEREBRAS_API_KEY", "https://api.cerebras.ai/v1",
                  [r"llama-?3\.3-70b", r"llama.*70b", r"gpt-oss-120b", r"qwen", r"llama"]),
 }
-ORDER = ["claude", "gemini", "mistral", "openrouter", "groq", "cerebras"]
+ORDER = ["groq", "gemini", "claude", "mistral", "openrouter", "cerebras"]
 _dead = set()  # providers that failed in a way that won't fix itself during this run
 
 
@@ -54,11 +54,12 @@ def has_key(name):
 def providers(cfg):
     """The services to try, in order. `ai_provider` set to a name puts that one first."""
     names = [n for n in ORDER if has_key(n)]
-    choice = cfg.get("ai_provider", "auto")
+    choice = cfg.get("ai_provider", "groq")
     if choice in names:
         names.remove(choice)
         names.insert(0, choice)
-    return names
+    # a service whose key was refused goes last, so the next one is used at once
+    return [n for n in names if n not in _dead] + [n for n in names if n in _dead]
 
 
 def provider(cfg):

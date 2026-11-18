@@ -130,9 +130,9 @@ def post_language(cfg, note):
     """Language of the post text. With 'swap' it is the opposite of what is spoken in
     the clip (English speech -> Arabic, Arabic -> English, anything else -> Arabic);
     with 'original' the spoken one. Videos with no known speech use `language`."""
-    setting = cfg.get("post_language", "swap")
+    setting = cfg.get("post_language", "both")
     if setting not in ("swap", "original"):
-        return setting
+        return setting  # "both", "ar", "en", ...
     m = re.search(r"^Spoken language: (\w+)", note or "", re.M)
     if not m:
         return cfg["language"]
@@ -144,12 +144,150 @@ def post_language(cfg, note):
 
 LANG_NAMES = {"ar": "Modern Standard Arabic (الفصحى)", "en": "standard English"}
 
+# ---------------------------------------------------------------- bilingual captions
+
+PIECES = {"type": "object", "properties": {
+    "hook_ar": {"type": "string"}, "hook_en": {"type": "string"},
+    "line_ar": {"type": "string"}, "line_en": {"type": "string"},
+    "question_ar": {"type": "string"}, "question_en": {"type": "string"},
+    "title_ar": {"type": "string"}, "title_en": {"type": "string"},
+    "hashtags_ar": {"type": "array", "items": {"type": "string"}},
+    "hashtags_en": {"type": "array", "items": {"type": "string"}},
+    "tags": {"type": "array", "items": {"type": "string"}},
+}, "required": ["hook_ar", "hook_en", "line_ar", "line_en", "question_ar", "question_en",
+                "title_ar", "title_en", "hashtags_ar", "hashtags_en", "tags"]}
+
+PIECES_SYSTEM = """You write the post text for one short video (TikTok, Instagram Reels, YouTube \
+Shorts) in two languages: Arabic and English. It is published automatically, exactly as you \
+write it, so it must be flawless.
+
+Describe only what really happens in the clip (from the notes and stills). Fields:
+- hook: the first line people see. One short, gripping sentence about the moment (no \
+"watch this", no clickbait lies), may end with ONE fitting emoji.
+- line: one more short sentence with the key detail or the funniest/most shocking line \
+said in the clip.
+- question: one short question that makes people comment.
+- title: a YouTube title, under 55 characters, concrete.
+- hashtags: 4-5 per language that people really search for this game/streamer/moment \
+(Arabic ones in Arabic letters joined with underscores; English ones in English). No spaces \
+inside a hashtag, no duplicates.
+- tags: 8-12 plain YouTube search phrases (no #), mixed Arabic and English.
+
+Arabic: correct Modern Standard Arabic (الفصحى) in the natural style of a good Arabic \
+social media page: simple, lively, grammatically perfect, no dialect, no literal \
+translation, no English words except names (write names the way Arabic pages write them, \
+e.g. ألانزوكا، جي تي إيه). Watch prepositions and agreement: "شاركنا رأيك" (not \
+"شاركنا برأيك"), "ما رأيكم؟", "أخبرونا في التعليقات".
+English: natural, fluent, how English creators write, correct spelling and grammar.
+The two languages say the same thing, each written as a native speaker would, not \
+translated word by word."""
+
+PROOF_SYSTEM = """You are a meticulous proofreader for Arabic (Modern Standard) and English \
+social media text. You get a JSON object of short texts that will be published as is. Fix \
+every spelling, grammar, preposition, agreement, punctuation and word-choice mistake, and \
+any awkward or literal phrasing, so each text reads as written by an educated native \
+speaker. Keep the meaning, length, emojis and names. Arabic stays Modern Standard Arabic \
+with no dialect and no English words except names. Hashtags: Arabic ones in Arabic letters \
+joined with underscores, English ones in English, no spaces. Return the same JSON keys."""
+
+
+def _hashtags(items):
+    out = []
+    for h in items or []:
+        h = re.sub(r"\s+", "_", str(h).strip().lstrip("#")).strip("_")
+        h = re.sub(r"[^\w\u0600-\u06FF]", "", h)
+        if h and h.lower() not in {x.lower() for x in out}:
+            out.append(h)
+    return ["#" + h for h in out]
+
+
+def _fix_arabic(text):
+    """Mistakes AI models often make in Arabic post text, fixed without asking anyone."""
+    fixes = [(r"شاركنا\s+برأيك", "شاركنا رأيك"), (r"شاركونا\s+برأيكم", "شاركونا رأيكم"),
+             (r"\s+([،؟!.:])", r"\1"), (r"([،؟!])(?=[^\s\d#])", r"\1 "), (r"\?", "؟"),
+             (r"\s{2,}", " ")]
+    for a, b in fixes:
+        text = re.sub(a, b, text)
+    return text.strip()
+
+
+def _assemble(d, lang, cfg, credit, shorts):
+    ar = {k: _fix_arabic(d.get(k + "_ar", "")) for k in ("hook", "line", "question", "title")}
+    en = {k: d.get(k + "_en", "").strip() for k in ("hook", "line", "question", "title")}
+    tags_ar, tags_en = _hashtags(d.get("hashtags_ar")), _hashtags(d.get("hashtags_en"))
+    defaults = _hashtags(cfg.get("default_hashtags") or [])
+
+    def block(x):
+        return "\n".join(t for t in (x["hook"], x["line"]) if t)
+
+    parts, tags = [], []
+    if lang in ("both", "ar"):
+        parts.append(block(ar))
+        tags += tags_ar
+    if lang in ("both", "en"):
+        parts.append(block(en))
+        tags += tags_en
+    question = " / ".join(q for q, on in ((ar["question"], lang in ("both", "ar")),
+                                         (en["question"], lang in ("both", "en"))) if q and on)
+    tags += [t for t in defaults if t.lower() not in {x.lower() for x in tags}]
+    credit_line = ""
+    if credit:
+        credit_line = {"ar": f"🎥 من بث {credit}", "en": f"🎥 Stream: {credit}"}.get(
+            lang, f"🎥 من بث {credit} | Stream: {credit}")
+    body = "\n\n".join(p for p in parts if p)
+    ig = "\n\n".join(x for x in (body, question, credit_line, " ".join(tags[:12])) if x)
+    tt = "\n\n".join(x for x in (body, credit_line, " ".join(tags[:7])) if x)
+    if lang == "ar":
+        title = ar["title"]
+    elif lang == "en":
+        title = en["title"]
+    else:
+        title = f"{ar['title']} | {en['title']}" if ar["title"] and en["title"] else \
+            ar["title"] or en["title"]
+    description = "\n\n".join(x for x in (body, credit_line, " ".join(tags[:5])) if x)
+    return _normalize({
+        "youtube": {"title": title, "description": description,
+                    "tags": [t.strip().lstrip("#") for t in d.get("tags") or []] +
+                            [t.lstrip("#") for t in tags]},
+        "instagram": {"caption": ig}, "tiktok": {"caption": tt},
+    }, shorts)
+
+
+def _generate_pieces(path, cfg, note, boost_of, name, lang, landscape, meta):
+    brief = [f"File name: {name}", f"Length: {meta['duration']:.0f} seconds"]
+    if cfg["niche"]:
+        brief.append(f"Account niche: {cfg['niche']}")
+    if cfg["brand_voice"]:
+        brief.append(f"Voice: {cfg['brand_voice']}")
+    if note:
+        brief.append(f"Notes about this clip: {note}")
+    if boost_of:
+        brief.append(f"This follows an earlier post that is taking off ({boost_of!r}): write "
+                     "it as a continuation with a fresh hook, not a repeat.")
+    data, who = llm.ask_json(PIECES_SYSTEM, "\n".join(brief), PIECES, cfg,
+                             images=video.frames_b64(path), max_tokens=8000)
+    texts = {k: v for k, v in data.items() if isinstance(v, (str, list))}
+    try:  # a second, careful read for mistakes
+        fixed, _ = llm.ask_json(PROOF_SYSTEM, json.dumps(texts, ensure_ascii=False), PIECES,
+                                cfg, max_tokens=8000)
+        if all(fixed.get(k) for k in ("hook_ar", "hook_en")):
+            data = fixed
+    except (llm.LLMError, KeyError, TypeError, ValueError) as e:
+        log.info("Proofreading skipped (%s)", str(e)[:120])
+    credit = re.search(r"Clipped from (.+?)'s video", note or "")
+    return _assemble(data, lang, cfg, credit.group(1) if credit else "", not landscape), who
+
 
 def generate(path, cfg, note="", boost_of=None, name=None):
     name = name or Path(path).name
     meta = video.probe(path)
     landscape = meta["width"] > meta["height"]
     lang = post_language(cfg, note)
+    if lang in ("both", "ar", "en"):
+        try:
+            return _generate_pieces(path, cfg, note, boost_of, name, lang, landscape, meta)
+        except (llm.LLMError, KeyError, TypeError, ValueError) as e:
+            log.warning("Caption pieces unavailable (%s)", str(e)[:160])
     brief = [
         f"Write every field in {LANG_NAMES.get(lang, lang)}, whatever language the "
         f"video or these notes are in, and only in it: no dialect and no words from "

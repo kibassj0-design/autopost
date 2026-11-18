@@ -470,7 +470,7 @@
       <h2>الذكاء الاصطناعي</h2>
       <p class="muted small" style="margin-top:0">يكفي مفتاح واحد. يختار اللحظات، يترجم الكتابة على الفيديو، ويكتب الكابشن. إذا أضفت أكثر من مفتاح مجاني تنتقل الأداة تلقائيا للتالي عند انتهاء حصة ما قبله، بهذا الترتيب.</p>
       <div class="row">
-        <div class="field"><label>الذكاء الاصطناعي الأساسي (يُجرَّب أولا، والباقي احتياط)</label><select data-set="ai_provider"><option value="groq">Groq</option><option value="gemini">Gemini</option><option value="mistral">Mistral</option><option value="openrouter">OpenRouter</option><option value="cerebras">Cerebras</option><option value="claude">Claude</option><option value="auto">تلقائي</option></select></div>
+        <div class="field"><label>الذكاء الاصطناعي الأساسي (يُجرَّب أولا، والباقي احتياط)</label><select data-set="ai_provider"><option value="groq">Groq</option><option value="gemini">Gemini</option><option value="mistral">Mistral</option><option value="openrouter">OpenRouter</option><option value="cerebras">Cerebras</option><option value="claude">Claude</option></select></div>
         <div class="field"><label>1. Gemini (مجاني) — <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></label><input data-key="GEMINI_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
         <div class="field"><label>2. Mistral (مجاني) — <a href="https://console.mistral.ai/api-keys" target="_blank" rel="noopener">console.mistral.ai/api-keys</a></label><input data-key="MISTRAL_API_KEY" dir="ltr" type="password" autocomplete="off"></div>
       </div>
@@ -516,7 +516,7 @@
       </div>
       <div class="row">
         <div class="field small"><label>الفاصل بين المنشورات (دقيقة)</label><input data-set="min_minutes_between_posts" type="number" min="0" max="1440"></div>
-        <div class="field"><label>لغة الكابشن (النص تحت المنشور)</label><select data-set="post_language"><option value="swap">عكس لغة المتحدث (إنكليزي ← عربي)</option><option value="original">نفس لغة المتحدث</option><option value="ar">عربي دائما</option><option value="en">إنكليزي دائما</option></select></div>
+        <div class="field"><label>لغة الكابشن (النص تحت المنشور)</label><select data-set="post_language"><option value="both">عربي وإنجليزي معا (الأفضل)</option><option value="swap">عكس لغة المتحدث (إنكليزي ← عربي)</option><option value="original">نفس لغة المتحدث</option><option value="ar">عربي دائما</option><option value="en">إنكليزي دائما</option></select></div>
         <div class="field small"><label>للفيديوهات بدون كلام</label><select data-set="language"><option value="ar">عربي</option><option value="en">إنكليزي</option></select></div>
         <div class="field"><label>مجال الحساب (يساعد الكابشن)</label><input data-set="niche" placeholder="مثال: مقاطع ألعاب وبثوث"></div>
       </div>
