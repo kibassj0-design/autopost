@@ -65,6 +65,12 @@ DEFAULTS = {
         "peak_gap_minutes": 45,   # ...but never closer than this to the previous post
         "peaks_only": False,      # hold queued clips until a busy hour
     },
+    "feed": {  # ready-made videos (with caption and time) pushed to a GitHub repo by Claude
+        "enabled": True,
+        "repo": "kibassj0-design/relss",
+        "branch": "qisas",
+        "check_minutes": 10,
+    },
     "momentum": {
         "enabled": True,
         "check_every_minutes": 30,
