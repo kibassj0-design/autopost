@@ -54,6 +54,42 @@ TIMED = ("download", "audio", "transcribe", "transcribe_clips", "pick", "transla
 SCHEDULED = "scheduled"  # folder under data/ holding videos waiting for their time
 
 
+# What each kind of key looks like, so one pasted into the wrong field is caught on Save.
+KEY_SHAPES = [
+    (r"^GOCSPX-", "YT_CLIENT_SECRET", "Client secret الخاص بيوتيوب (Google)"),
+    (r"\.apps\.googleusercontent\.com$", "YT_CLIENT_ID", "Client ID الخاص بيوتيوب"),
+    (r"^(AIza|AQ\.)", "GEMINI_API_KEY", "مفتاح Gemini"),
+    (r"^gsk_", "GROQ_API_KEY", "مفتاح Groq"),
+    (r"^sk-or-", "OPENROUTER_API_KEY", "مفتاح OpenRouter"),
+    (r"^csk-", "CEREBRAS_API_KEY", "مفتاح Cerebras"),
+    (r"^sk-ant-", "ANTHROPIC_API_KEY", "مفتاح Claude"),
+    (r"^(EAA|IG)", "IG_ACCESS_TOKEN", "توكن انستغرام"),
+]
+FIELD_NAMES = {"YT_CLIENT_SECRET": "Client secret يوتيوب", "YT_CLIENT_ID": "Client ID يوتيوب",
+               "GEMINI_API_KEY": "Gemini", "GROQ_API_KEY": "Groq", "MISTRAL_API_KEY": "Mistral",
+               "OPENROUTER_API_KEY": "OpenRouter", "CEREBRAS_API_KEY": "Cerebras",
+               "ANTHROPIC_API_KEY": "Claude", "FB_APP_SECRET": "App secret فيسبوك",
+               "TT_CLIENT_SECRET": "Client secret تيك توك", "TT_CLIENT_KEY": "Client key تيك توك",
+               "IG_ACCESS_TOKEN": "توكن انستغرام", "FB_APP_ID": "App ID فيسبوك",
+               "TG_BOT_TOKEN": "توكن بوت تيليجرام"}
+
+
+def _wrong_field(field, value):
+    """An Arabic explanation when a value clearly belongs to another field, else ''."""
+    if not value:
+        return ""
+    for pattern, owner, what in KEY_SHAPES:
+        if re.search(pattern, value) and owner != field and field in FIELD_NAMES:
+            if field == "IG_ACCESS_TOKEN" and owner == "IG_ACCESS_TOKEN":
+                continue
+            return (f"الذي لصقته في خانة «{FIELD_NAMES[field]}» يبدو {what}، لا يخص هذه "
+                    f"الخانة، فلم يُحفظ. الصقه في خانته الصحيحة.")
+    if field == "YT_CLIENT_SECRET" and not value.startswith("GOCSPX-"):
+        return ("Client secret يوتيوب يبدأ بـ GOCSPX- ، والذي لصقته لا يبدأ بها فلم يُحفظ. "
+                "انسخه من Google Cloud ← Credentials، أو استورد ملف JSON.")
+    return ""
+
+
 class LogBuffer(logging.Handler):
     def __init__(self):
         super().__init__()
@@ -516,6 +552,9 @@ class App:
             v = v.strip().strip("\"'")
             if k == "ANTHROPIC_API_KEY" and v and not v.startswith("sk-ant-"):
                 raise ValueError("مفتاح Claude يبدأ بـ sk-ant- . هذه القيمة ليست مفتاح Claude.")
+            wrong = _wrong_field(k, v)
+            if wrong:
+                raise ValueError(wrong)
             env[k] = v
         for k in body.get("clear") or []:
             if k in SECRET_KEYS + PLAIN_KEYS:
