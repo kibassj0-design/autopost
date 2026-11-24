@@ -464,6 +464,8 @@ class App:
             r["name"] = Path(r["path"]).name
             r["exists"] = Path(r["path"]).is_file()
             r["viral"] = self.publisher.scores.get(r["name"])
+            r["cover"] = Path(r["path"]).with_suffix(".jpg").name \
+                if Path(r["path"]).with_suffix(".jpg").exists() else ""
         return rows
 
     # ---- state for the page
@@ -773,6 +775,8 @@ def make_handler(app):
                 return self._send(403, {"error": "forbidden"})
             if url.path == "/api/schedule/upload":
                 return self._upload()
+            if url.path == "/api/cover/upload":
+                return self._cover_upload()
             try:
                 length = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(length) or b"{}")
@@ -810,6 +814,37 @@ def make_handler(app):
                 dst.unlink(missing_ok=True)
                 return self._send(400, {"error": f"تعذّر رفع الفيديو: {e}"})
             return self._send(200, {"file": dst.name})
+
+        def _cover_upload(self):
+            """The user's own cover picture for a queued or scheduled video."""
+            name = Path(urllib.parse.unquote(self.headers.get("X-Name") or "")).name
+            where = self.headers.get("X-In", "inbox")
+            folder = app.schedule_dir() if where == "scheduled" else app.publisher.inbox
+            target = folder / name
+            length = int(self.headers.get("Content-Length") or 0)
+            if not name or not target.is_file():
+                return self._send(400, {"error": "الفيديو غير موجود."})
+            if name == app.publisher.current:
+                return self._send(400, {"error": "هذا المقطع يُنشر الآن."})
+            if length > 25 * 1024 * 1024:
+                return self._send(400, {"error": "الصورة كبيرة جدا (الحد 25 ميغا)."})
+            image = config.DATA / f"cover-upload-{int(time.time() * 1000)}.img"
+            try:
+                image.write_bytes(self.rfile.read(length))
+                info = json.loads(video._run(["ffprobe", "-v", "error", "-print_format", "json",
+                                              "-show_streams", str(image)]))
+                pics = [st for st in info.get("streams", []) if st.get("codec_type") == "video"
+                        and st.get("codec_name") in ("mjpeg", "png", "webp", "bmp", "tiff", "gif")
+                        and (st.get("width") or 0) >= 100 and (st.get("height") or 0) >= 100]
+                if not pics:
+                    raise ValueError("not a picture")
+                video.apply_cover(target, image, app.cfg["clipper"].get("cover_ms", 500) / 1000)
+            except Exception as e:
+                return self._send(400, {"error": f"تعذّر وضع الغلاف: اختر صورة (jpg أو png). ({str(e)[:120]})"})
+            finally:
+                image.unlink(missing_ok=True)
+            log.info("Custom cover set for %s", name)
+            return self._send(200, {"ok": True})
 
         def _act(self, path, body):
             pub = app.publisher

@@ -93,8 +93,8 @@ def encoder():
     return _encoder
 
 
-def _run(cmd):
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd, timeout=None):
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(f"{cmd[0]} failed: {proc.stderr.strip()[-600:]}")
     return proc.stdout
@@ -219,3 +219,32 @@ def boost_window(source_duration, posted_seconds, clip_seconds, index):
     re-posting a piece of what is already up is duplicate content."""
     start = posted_seconds + index * clip_seconds
     return start if source_duration - start >= min(clip_seconds, 15) else None
+
+
+def apply_cover(path, image, seconds=0.5):
+    """Put a picture (the user's own cover) on the first `seconds` of a video, filling the
+    frame, so platforms show it as the cover. The video is replaced in place."""
+    import os
+    meta = probe(path)
+    w, h = meta["width"] - meta["width"] % 2, meta["height"] - meta["height"] % 2
+    # not a video name: the queue must never see the half-made file
+    tmp = Path(path).with_name(Path(path).name + ".covering")
+    graph = (f"[1:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
+             f"setsar=1,format=yuva420p,fade=t=out:st={max(0, seconds - 0.12):.2f}:d=0.12:"
+             f"alpha=1[c];[0:v]setsar=1[m];[m][c]overlay=0:0:eof_action=pass,format=yuv420p[v]")
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(path), "-loop", "1", "-t", f"{seconds:.2f}",
+           "-i", str(image), "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
+           *encoder()[1], "-c:a", "copy", "-movflags", "+faststart", "-f", "mp4", str(tmp)]
+    try:
+        try:
+            _run(cmd, timeout=600)
+        except RuntimeError:
+            if encoder()[0] == "libx264":
+                raise
+            cmd[cmd.index(encoder()[1][0]):cmd.index("-c:a")] = _CPU[1]
+            _run(cmd, timeout=600)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    _run(["ffmpeg", "-y", "-v", "error", "-i", str(image), "-vf",
+          "scale=360:-2", "-q:v", "4", str(Path(path).with_suffix(".jpg"))])

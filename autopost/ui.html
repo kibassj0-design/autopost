@@ -353,6 +353,8 @@
           <div class="row" id="s-platforms" style="gap:4px;padding-top:6px"></div>
         </div>
       </div>
+      <div class="field"><label>غلاف الفيديو (اختياري): صورة توضع في أول نصف ثانية ويُستعمل غلافا</label>
+        <div class="row" style="align-items:center"><input type="file" id="s-cover" accept="image/*"><span class="muted small">بدونها يبقى الفيديو كما هو</span></div></div>
       <div class="field"><label for="s-caption">الكابشن (اختياري)</label>
         <textarea id="s-caption" placeholder="اتركه فارغا ليكتبه الذكاء الاصطناعي، أو اكتب نصك والهاشتاغات وسيُنشر كما هو."></textarea></div>
       <div class="row"><button class="btn primary" id="s-add" disabled><svg><use href="#i-cal"/></svg>جدولة</button></div>
@@ -952,6 +954,7 @@ function renderQueue(s) {
         el("div", { class: "actions" }, [
           viralBadge(c.viral, c.name),
           el("button", { class: "btn sm", onclick: () => play(c.name, "inbox") }, [icon("i-play"), "معاينة"]),
+          el("button", { class: "btn sm", title: "اختر صورة من جهازك لتكون غلاف هذا المقطع", onclick: () => setCover(c.name, "inbox") }, "الغلاف"),
           el("button", { class: "btn sm", onclick: () => openDialog({ mode: "queue", name: c.name, title: c.title }) }, [icon("i-cal"), "جدولة"]),
           el("button", { class: "btn sm", text: "انشر الآن", onclick: () => act("/api/queue/publish", { name: c.name }) }),
           el("button", { class: "btn sm danger", text: "حذف", onclick: () => {
@@ -978,7 +981,7 @@ function renderSchedList(box, list, now, emptyText) {
     rows.push({ kind: "item", key: "s-" + x.id, x });
   }
   keyed(box, rows, r => r.key,
-    r => r.kind === "day" ? r.label : JSON.stringify([r.x.status, r.x.at, r.x.caption, r.x.platforms, r.x.result, Math.floor((r.x.at - now) / 60), r.x.viral]),
+    r => r.kind === "day" ? r.label : JSON.stringify([r.x.status, r.x.at, r.x.caption, r.x.platforms, r.x.result, Math.floor((r.x.at - now) / 60), r.x.viral, r.x.cover]),
     r => {
       if (r.kind === "day") return el("div", { class: "day", text: r.label });
       const x = r.x;
@@ -995,6 +998,9 @@ function renderSchedList(box, list, now, emptyText) {
       const pending = ["pending", "failed", "cancelled"].includes(x.status);
       return el("div", { class: "item" }, [
         el("div", { class: "top" }, [
+          x.cover ? el("img", { class: "cover", alt: "الغلاف", title: "الغلاف (اضغط للتكبير)",
+            src: "/media?name=" + encodeURIComponent(x.cover) + "&in=scheduled&t=" + encodeURIComponent(TOKEN) + "&v=" + Date.now() % 100000,
+            onclick: e => window.open(e.target.src, "_blank") }) : null,
           el("div", { class: "title" }, [
             el("div", { class: "name", text: x.title || x.name }),
             el("div", { class: "meta" }, [
@@ -1006,6 +1012,7 @@ function renderSchedList(box, list, now, emptyText) {
               ...links])]),
           el("div", { class: "actions" }, [
             x.exists ? el("button", { class: "btn sm", onclick: () => play(x.name, "scheduled") }, [icon("i-play"), "معاينة"]) : null,
+            x.exists && pending ? el("button", { class: "btn sm", title: "اختر صورة لتكون غلاف هذا الفيديو", onclick: () => setCover(x.name, "scheduled") }, "الغلاف") : null,
             pending ? el("button", { class: "btn sm", text: "تعديل", onclick: () => openDialog({ mode: "edit", id: x.id, at: x.at, caption: x.caption, platforms: x.platforms, title: x.title }) }) : null,
             x.status === "publishing" ? el("button", { class: "btn sm danger", text: "إلغاء النشر", onclick: cancelPublish }) : null,
             pending ? el("button", { class: "btn sm", text: x.status === "pending" ? "انشر الآن" : "أعد المحاولة",
@@ -1152,6 +1159,33 @@ function upload(file, onProgress) {
     x.send(file);
   });
 }
+function sendCover(name, where, file) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/cover/upload");
+    x.setRequestHeader("X-Token", TOKEN);
+    x.setRequestHeader("X-Name", encodeURIComponent(name));
+    x.setRequestHeader("X-In", where);
+    x.onload = () => {
+      let d = {}; try { d = JSON.parse(x.responseText); } catch (e) {}
+      x.status === 200 ? resolve(d) : reject(new Error(d.error || "HTTP " + x.status));
+    };
+    x.onerror = () => reject(new Error("انقطع الرفع"));
+    x.send(file);
+  });
+}
+function setCover(name, where) {
+  const input = el("input", { type: "file", accept: "image/*" });
+  input.addEventListener("change", async () => {
+    const f = input.files[0];
+    if (!f) return;
+    toast("يضع الغلاف…", "ok");
+    try { await sendCover(name, where, f); toast("تم وضع الغلاف في أول الفيديو", "ok"); }
+    catch (e) { toast(e.message, "bad"); }
+    refresh();
+  });
+  input.click();
+}
 function checkTime(value) {
   if (!value) throw new Error("اختر يوم ووقت النشر.");
   const at = new Date(value).getTime() / 1000;
@@ -1166,7 +1200,10 @@ $("#s-add").addEventListener("click", async () => {
     if (!platforms.length) throw new Error("اختر منصة واحدة على الأقل.");
     btn.disabled = true; bar.hidden = false;
     const { file } = await upload(pickedFile, f => { bar.firstChild.style.width = Math.round(f * 100) + "%"; });
+    const cov = $("#s-cover").files[0];
+    if (cov) await sendCover(file, "scheduled", cov);
     await api("/api/schedule/add", { file, at, caption: $("#s-caption").value, platforms });
+    $("#s-cover").value = "";
     toast("جُدول الفيديو: " + fmtWhen(at), "ok");
     pickedFile = null; $("#s-file").value = ""; $("#s-name").textContent = ""; $("#s-caption").value = "";
     $("#s-at").value = defaultTime();
