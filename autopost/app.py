@@ -454,7 +454,7 @@ class App:
         db = store.connect()
         rows = [dict(r) for r in db.execute(
             "SELECT * FROM schedule WHERE status!='done' OR at > ? ORDER BY at",
-            (time.time() - 7 * 86400,))]
+            (time.time() - 30 * 86400,))]
         db.close()
         for r in rows:
             r["platforms"] = json.loads(r["platforms"] or "[]")

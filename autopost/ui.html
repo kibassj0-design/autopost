@@ -358,8 +358,12 @@
       <div class="row"><button class="btn primary" id="s-add" disabled><svg><use href="#i-cal"/></svg>جدولة</button></div>
     </div>
     <div class="card">
-      <div class="card-head"><h2>المنشورات المجدولة</h2></div>
+      <div class="card-head"><h2>قيد النشر والمجدولة</h2><span class="muted small" id="sched-count"></span></div>
       <div id="sched"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>تم النشر</h2><span class="muted small" id="done-count"></span></div>
+      <div id="sched-done"></div>
     </div>
   </section>
 
@@ -956,15 +960,24 @@ function renderQueue(s) {
 }
 
 function renderSchedule(s) {
-  const now = s.publisher.now;
+  // two lists: what is still to be posted (soonest first) and what was posted (newest first)
+  const active = s.schedule.filter(x => x.status !== "done").sort((a, b) => a.at - b.at);
+  const done = s.schedule.filter(x => x.status === "done").sort((a, b) => b.at - a.at);
+  $("#sched-count").textContent = active.length ? active.length + " منشور" : "";
+  $("#done-count").textContent = done.length ? done.length + " منشور (آخر 30 يوما)" : "";
+  renderSchedList($("#sched"), active, s.publisher.now, "لا يوجد شيء مجدول حاليا.");
+  renderSchedList($("#sched-done"), done, s.publisher.now, "لم يُنشر شيء بعد.");
+}
+
+function renderSchedList(box, list, now, emptyText) {
   const rows = [];
   let day = null;
-  for (const x of s.schedule) {
+  for (const x of list) {
     const d = dayLabel(x.at);
     if (d !== day) { rows.push({ kind: "day", key: "day-" + d, label: d }); day = d; }
     rows.push({ kind: "item", key: "s-" + x.id, x });
   }
-  keyed($("#sched"), rows, r => r.key,
+  keyed(box, rows, r => r.key,
     r => r.kind === "day" ? r.label : JSON.stringify([r.x.status, r.x.at, r.x.caption, r.x.platforms, r.x.result, Math.floor((r.x.at - now) / 60), r.x.viral]),
     r => {
       if (r.kind === "day") return el("div", { class: "day", text: r.label });
@@ -1001,7 +1014,7 @@ function renderSchedule(s) {
               if (confirm(x.status === "done" ? "إزالة من القائمة؟" : "حذف هذا المنشور المجدول وملفه؟")) act("/api/schedule/delete", { id: x.id }); } }) : null])]),
         ...errs]);
     },
-    () => empty("لا توجد منشورات مجدولة بعد.", "i-cal"));
+    () => empty(emptyText, "i-cal"));
 }
 
 function renderPosts(s) {
