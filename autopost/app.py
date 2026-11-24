@@ -121,6 +121,8 @@ class App:
         threading.Thread(target=self._predict_loop, daemon=True).start()
         threading.Thread(target=self._tools_loop, daemon=True).start()
         threading.Thread(target=self._fetch_assets, daemon=True).start()
+        from . import feed
+        threading.Thread(target=feed.loop, args=(self,), daemon=True).start()
         self._resume_jobs()
 
     def _fetch_assets(self):
