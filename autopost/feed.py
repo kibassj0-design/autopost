@@ -11,7 +11,7 @@ The repo holds ``ready/index.json``:
 Every few minutes this checks the index; each new id is downloaded once into
 data/scheduled/ and added to the schedule with that caption and time, exactly as
 if it had been added by hand in the Schedule tab. A time already past posts right
-away. Ids already taken are remembered in data/feed_seen.json.
+away, but one more than 3 hours late is skipped. Ids already taken are remembered in data/feed_seen.json.
 """
 import json
 import logging
@@ -25,6 +25,7 @@ from . import config
 
 log = logging.getLogger("autopost.feed")
 SEEN = "feed_seen.json"
+STALE = 3 * 3600   # items whose time passed more than this are skipped, not posted
 
 
 def _raw(cfg, path):
@@ -61,6 +62,11 @@ def check(app):
     for item in items:
         iid = str(item.get("id") or "")
         if not iid or iid in seen or not item.get("video"):
+            continue
+        if _when(item.get("at") or time.time()) < time.time() - STALE:
+            # its time passed long ago (e.g. the PC was off): never post old items in a burst
+            seen.add(iid); _remember(seen)
+            log.info("Feed: skipped «%s», its posting time has passed", item.get("title") or iid)
             continue
         name = f"feed-{iid}{Path(item['video']).suffix or '.mp4'}"
         dst = app.schedule_dir() / name
