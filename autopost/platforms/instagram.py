@@ -19,6 +19,42 @@ VERSION = "v23.0"
 REFRESH_EVERY = 7 * 24 * 3600
 
 
+# ---------------------------------------------------------------- Meta's request limit
+
+RATE_CODES = {4, 17, 32, 613, 80002}  # "Application/User request limit reached" and kin
+_cooldown = [0.0]
+
+
+def cooling_down():
+    """Seconds until Instagram should be asked again after hitting its limit, or 0."""
+    return max(0.0, _cooldown[0] - time.time())
+
+
+def _checked(r, what):
+    """Like platforms.check, but a request-limit answer stops all Instagram calls for an
+    hour (more calls would only extend the block) and says so plainly."""
+    from . import PlatformError, check
+    if r.status_code >= 400:
+        try:
+            err = r.json().get("error", {})
+        except ValueError:
+            err = {}
+        if err.get("code") in RATE_CODES or "request limit" in str(err.get("message", "")).lower():
+            _cooldown[0] = time.time() + 3600
+            raise PlatformError(
+                "Instagram: وصلت حد الطلبات المسموح لتطبيقك عند Meta في الساعة. الأداة "
+                "توقفت عن مراسلة انستغرام ساعة كاملة، وتعيد نشر هذا المقطع وحدها بعدها. "
+                f"({err.get('message', '')[:120]})")
+    return check(r, what)
+
+
+def _not_cooling(PlatformError):
+    wait = cooling_down()
+    if wait:
+        raise PlatformError(f"Instagram: الأداة تنتظر انتهاء حد الطلبات (بعد {int(wait // 60) + 1} "
+                            "دقيقة)، ثم تنشر هذا المقطع وحدها.")
+
+
 def _base():
     host = config.env("IG_GRAPH_HOST", required=False) or "graph.facebook.com"
     return f"https://{host}/{VERSION}"
@@ -247,20 +283,26 @@ def _temporary_urls(path):
 def _wait(token, container):
     """Instagram processes the video before it can be published."""
     from . import PlatformError, check
-    for _ in range(120):
-        st = check(requests.get(f"{_base()}/{container['id']}", timeout=30, params={
+    # Each check counts against Meta's hourly request limit: wait a little longer each
+    # time (10 s, 15 s, ... up to 45 s) instead of asking every 5 seconds.
+    waited, pause = 0, 10
+    time.sleep(pause)
+    while waited < 15 * 60:
+        st = _checked(requests.get(f"{_base()}/{container['id']}", timeout=30, params={
             "fields": "status_code,status", "access_token": token}), "Instagram status").json()
         if st.get("status_code") == "FINISHED":
             return
         if st.get("status_code") in ("ERROR", "EXPIRED"):
             raise PlatformError(f"Instagram rejected the video: {st.get('status')}")
-        time.sleep(5)
-    raise PlatformError("Instagram was still processing the video after 10 minutes")
+        time.sleep(pause)
+        waited += pause
+        pause = min(pause + 5, 45)
+    raise PlatformError("Instagram was still processing the video after 15 minutes")
 
 
 def _container(token, user, text, **source):
     from . import check
-    return check(requests.post(f"{_base()}/{user}/media", timeout=60, data={
+    return _checked(requests.post(f"{_base()}/{user}/media", timeout=60, data={
         "media_type": "REELS", "caption": text["caption"], "share_to_feed": "true",
         "thumb_offset": "300",  # the clip's first second is its designed cover
         "access_token": token, **source}), "Instagram container").json()
@@ -274,7 +316,7 @@ def _media_publish(token, user, creation_id):
         r = requests.post(f"{_base()}/{user}/media_publish", timeout=60, data={
             "creation_id": creation_id, "access_token": token})
         if r.status_code < 400 or attempt == 3:
-            return check(r, "Instagram publish").json()
+            return _checked(r, "Instagram publish").json()
         try:
             err = r.json().get("error", {})
         except ValueError:
@@ -282,12 +324,13 @@ def _media_publish(token, user, creation_id):
         not_ready = err.get("code") == 9007 or err.get("error_subcode") == 2207027 or \
             "not ready" in str(err.get("message", "")).lower()
         if not not_ready:
-            return check(r, "Instagram publish").json()
+            return _checked(r, "Instagram publish").json()
         time.sleep(15)
 
 
 def publish(path, text, cfg):
     from . import PlatformError, check
+    _not_cooling(PlatformError)
     token, user = config.env("IG_ACCESS_TOKEN"), config.env("IG_USER_ID")
     container = _container(token, user, text, upload_type="resumable")
 
@@ -320,6 +363,8 @@ def publish(path, text, cfg):
                 log.info("Instagram took the video from %s", host)
                 break
             except PlatformError as e:
+                if cooling_down():
+                    raise  # the request limit: more attempts would only extend it
                 last = f"via {host}: {e}"
                 log.warning("Instagram could not use the copy on %s: %s", host, e)
         else:
@@ -331,15 +376,38 @@ def publish(path, text, cfg):
     return media["id"], link.json().get("permalink") if link.ok else None
 
 
+_stats_cache = {}       # remote id -> (time, numbers): each post is read every 2 hours
+_no_insights = [False]  # views need a permission this account may not have
+
+
 def stats(remote_id):
+    """A post's numbers, read at most every 2 hours (requests count against Meta's limit)."""
+    from . import PlatformError
+    if cooling_down():
+        raise PlatformError("Instagram request limit: stats skipped for now")
+    cached = _stats_cache.get(remote_id)
+    if cached and time.time() - cached[0] < 2 * 3600:
+        return cached[1]
+    out = _read_stats(remote_id)
+    _stats_cache[remote_id] = (time.time(), out)
+    return out
+
+
+def _read_stats(remote_id):
     from . import check
     token = config.env("IG_ACCESS_TOKEN")
-    r = requests.get(f"{_base()}/{remote_id}/insights", timeout=30, params={
-        "metric": "views,likes,comments,shares", "access_token": token})
-    if r.status_code >= 400:
+    r = None
+    if not _no_insights[0]:
+        r = requests.get(f"{_base()}/{remote_id}/insights", timeout=30, params={
+            "metric": "views,likes,comments,shares", "access_token": token})
+        if r.status_code >= 400:
+            _checked(r, "Instagram insights") if "request limit" in r.text.lower() else None
+            if "permission" in r.text.lower() or '"code":10' in r.text or '"code":200' in r.text:
+                _no_insights[0] = True  # don't spend a request on it again this run
+    if r is None or r.status_code >= 400:
         # Views need the instagram_manage_insights permission; likes and comments
         # come with the basic one, so engagement is still tracked without it.
-        basic = check(requests.get(f"{_base()}/{remote_id}", timeout=30, params={
+        basic = _checked(requests.get(f"{_base()}/{remote_id}", timeout=30, params={
             "fields": "like_count,comments_count", "access_token": token}),
             "Instagram likes").json()
         return {"views": None, "likes": int(basic.get("like_count") or 0),

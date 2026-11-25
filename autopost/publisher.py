@@ -129,6 +129,9 @@ class Publisher:
             delay = self.RETRY_AFTER[attempts]
             if row["platform"] == "tiktok":
                 delay = max(delay, tiktok.inbox_wait())  # a full TikTok inbox: after it empties
+            if row["platform"] == "instagram":
+                from .platforms import instagram
+                delay = max(delay, instagram.cooling_down() + 120)  # after Meta's limit lifts
             self._db.execute("INSERT OR REPLACE INTO retries VALUES(?,?,?)",
                              (row["id"], attempts, time.time() + delay))
             log.info("Post %d failed; trying it again in %d min", row["id"], delay // 60)
