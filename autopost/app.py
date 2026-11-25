@@ -104,7 +104,17 @@ class LogBuffer(logging.Handler):
 class App:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.token = secrets.token_urlsafe(24)
+        # The page's key stays the same across restarts (updates), so a page left open
+        # keeps working instead of every request and upload being refused.
+        key = config.DATA / "ui-token"
+        try:
+            self.token = key.read_text().strip()
+        except OSError:
+            self.token = ""
+        if len(self.token) < 20:
+            self.token = secrets.token_urlsafe(24)
+            config.DATA.mkdir(exist_ok=True)
+            key.write_text(self.token)
         self.oauth_state = secrets.token_urlsafe(16)
         self.logs = LogBuffer()
         logging.getLogger().addHandler(self.logs)
@@ -772,6 +782,14 @@ def make_handler(app):
         def do_POST(self):
             url = urllib.parse.urlparse(self.path)
             if not self._local() or not self._authorized({}):
+                # Read what was sent first: answering mid-upload resets the connection and
+                # the page only sees "upload interrupted" instead of the real answer.
+                left = int(self.headers.get("Content-Length") or 0)
+                while left > 0:
+                    chunk = self.rfile.read(min(1 << 20, left))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
                 return self._send(403, {"error": "forbidden"})
             if url.path == "/api/schedule/upload":
                 return self._upload()

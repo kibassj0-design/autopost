@@ -684,6 +684,7 @@ async function api(path, body) {
     opt.body = JSON.stringify(body);
   }
   const r = await fetch(path, opt);
+  if (r.status === 403) { location.reload(); throw new Error("أُعيد تحميل الصفحة، حاول مرة أخرى."); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
   return data;
@@ -1153,9 +1154,10 @@ function upload(file, onProgress) {
     x.onload = () => {
       let data = {};
       try { data = JSON.parse(x.responseText); } catch (e) {}
+      if (x.status === 403) { location.reload(); return reject(new Error("أُعيد تحميل الصفحة، اختر الفيديو مرة أخرى.")); }
       x.status === 200 ? resolve(data) : reject(new Error(data.error || "HTTP " + x.status));
     };
-    x.onerror = () => reject(new Error("انقطع الرفع"));
+    x.onerror = () => reject(new Error("انقطع الرفع: تأكد أن النافذة السوداء للأداة ما زالت مفتوحة، ثم أعد المحاولة."));
     x.send(file);
   });
 }
@@ -1168,9 +1170,10 @@ function sendCover(name, where, file) {
     x.setRequestHeader("X-In", where);
     x.onload = () => {
       let d = {}; try { d = JSON.parse(x.responseText); } catch (e) {}
+      if (x.status === 403) { location.reload(); return reject(new Error("أُعيد تحميل الصفحة، حاول مرة أخرى.")); }
       x.status === 200 ? resolve(d) : reject(new Error(d.error || "HTTP " + x.status));
     };
-    x.onerror = () => reject(new Error("انقطع الرفع"));
+    x.onerror = () => reject(new Error("انقطع الرفع: تأكد أن النافذة السوداء للأداة ما زالت مفتوحة، ثم أعد المحاولة."));
     x.send(file);
   });
 }
