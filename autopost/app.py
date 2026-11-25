@@ -16,7 +16,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import backup, checks, config, llm, notify, store, timing, updater, video, virality
+from . import backup, checks, cleanup, config, llm, notify, store, timing, updater, video, virality
 from .platforms import tiktok, youtube
 from .publisher import Publisher
 
@@ -203,9 +203,18 @@ class App:
             time.sleep(6 * 3600)
 
     def _backup_loop(self):
+        last_clean = 0
         while True:  # posts and schedule change all day; keys are saved when they change
-            time.sleep(3600)
+            free = cleanup.free_bytes()
+            low = free is not None and free < cleanup.LOW_SPACE
+            if low or time.time() - last_clean > 6 * 3600:
+                try:
+                    cleanup.run(urgent=low)
+                except Exception as e:
+                    log.info("Cleanup: %s", e)
+                last_clean = time.time()
             backup.save()
+            time.sleep(600 if low else 1800)
 
     # ---- clip jobs
 
@@ -538,6 +547,7 @@ class App:
             "enabled": self.cfg["platforms"],
             "ai": llm.providers(self.cfg),
             "ai_status": llm.status(self.cfg),
+            "free_gb": round((cleanup.free_bytes() or 0) / 1024 ** 3, 1),
             "tiktok_inbox_wait": tiktok.inbox_wait() if config.connected("tiktok") else 0,
             "encoder": video.encoder()[0],
             "schedule": self.schedule_list(),
@@ -984,6 +994,10 @@ def make_handler(app):
                            "WHERE platform='tiktok')", (time.time(),))
                 db.commit()
                 db.close()
+            elif path == "/api/cleanup":
+                freed = cleanup.run(urgent=bool(body.get("hard")))
+                return {"freed_gb": round(freed / 1024 ** 3, 2),
+                        "free_gb": round((cleanup.free_bytes() or 0) / 1024 ** 3, 1)}
             elif path == "/api/insights":
                 db = store.connect()
                 try:

@@ -591,6 +591,15 @@
     </div>
 
     <div class="card">
+      <h2>مساحة التخزين</h2>
+      <p class="muted small" style="margin-top:-4px">الأداة تحذف وحدها ما لم تعد تحتاجه: نسخ المنصات بعد يومين، المقاطع المنشورة بعد 7 أيام، الفيديوهات المجدولة بعد 3 أيام من نشرها، وملفات العمل القديمة. وتحذف أسرع إذا قلّت المساحة. طابور النشر ومفاتيحك وحساباتك لا تُمس أبدا.</p>
+      <div class="row" style="align-items:center">
+        <button class="btn" id="clean-now">تنظيف الآن</button>
+        <span class="muted small" id="clean-out"></span>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>حفظ المفاتيح والحسابات</h2>
       <p class="muted small" style="margin-top:-4px">الأداة تحفظ نسخة من مفاتيحك وحساباتك المربوطة وإعداداتك تلقائيا خارج مجلد الأداة، وترجعها وحدها إذا حُذف المجلد أو نزّلته من جديد. ويمكنك أيضا حفظ ملف نسخة احتياطية في أي مكان (مثل فلاشة)، واسترجاعه على أي جهاز.</p>
       <div class="muted small" id="bk-where"></div>
@@ -820,6 +829,7 @@ function render() {
   $("#c-sched").textContent = s.schedule.filter(x => x.status === "pending").length || "";
 
   const msgs = [];
+  if (s.free_gb && s.free_gb < 3) msgs.push("المساحة الفارغة على القرص " + s.free_gb + " جيجا فقط: قد يفشل صنع المقاطع ونشرها. الأداة تحذف ملفاتها القديمة وحدها، ويمكنك الضغط على «تنظيف الآن» في الإعدادات، أو تفريغ مساحة من الكمبيوتر.");
   if (!s.ai.length) msgs.push("لم يُضبط مفتاح ذكاء اصطناعي: المقاطع ستُختار من الصوت فقط.");
   else if ((s.ai_status || []).length && s.ai_status.every(x => ["exhausted", "rejected"].includes(x.state)))
     msgs.push("كل مفاتيح الذكاء الاصطناعي متوقفة الآن (انتهت حصصها أو رُفضت): الاختيار والترجمة والكابشن تعمل بالطريقة البسيطة حتى تعود. التفاصيل في الإعدادات ← حالة الذكاء الاصطناعي.");
@@ -1502,6 +1512,15 @@ $("#nt-tg").addEventListener("click", async () => {
   catch (e) { toast(e.message, "bad"); }
 });
 window.addEventListener("load", notifyInfo);  // after the QR code library has loaded
+
+$("#clean-now").addEventListener("click", async () => {
+  const b = $("#clean-now"); b.disabled = true;
+  try {
+    const r = await api("/api/cleanup", { hard: true });
+    $("#clean-out").textContent = "حُذف " + r.freed_gb + " جيجا. المساحة الفارغة الآن: " + r.free_gb + " جيجا.";
+  } catch (e) { toast(e.message, "bad"); }
+  b.disabled = false;
+});
 
 // ---------------------------------------------------------------- backup
 async function backupInfo() {
