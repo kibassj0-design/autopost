@@ -1000,6 +1000,9 @@ function renderSchedList(box, list, now, emptyText) {
                    done: ["ok", "نُشر"], failed: ["bad", "فشل"], cancelled: ["", "أُلغي النشر"] }[x.status] || ["", x.status];
       const links = x.status === "done" && x.result ? Object.entries(x.result).filter(([, v]) => String(v).startsWith("http"))
         .map(([k, v]) => el("a", { href: v, target: "_blank", rel: "noopener", class: "badge", text: (PLATFORMS[k] || k) + " ↗" })) : [];
+      if (x.status === "pending" && x.result && String(x.result.youtube || "").startsWith("http"))
+        links.push(el("a", { href: x.result.youtube, target: "_blank", rel: "noopener", class: "badge ok",
+          title: "رُفع إلى يوتيوب ويوتيوب ينشره بنفسه في الموعد، حتى لو كان الكمبيوتر مطفأ", text: "يوتيوب: مجدول عنده ✓" }));
       if (x.result) for (const [k, v] of Object.entries(x.result)) {
         if (v === "tiktok:inbox") links.push(el("span", { class: "badge warn", text: "تيك توك: في صندوق الوارد" }));
         if (v === "tiktok:private") links.push(el("span", { class: "badge warn", text: "تيك توك: خاص" }));

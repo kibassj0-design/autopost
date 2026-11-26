@@ -94,8 +94,9 @@ class PublishCancelled(RuntimeError):
 
 def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
             parent_id=None, boost_of=None, start=0.0, duration=None, own_caption=None,
-            stop=None):
-    """Returns (video_id, {platform: url-or-error}, text)."""
+            stop=None, publish_at=None):
+    """Returns (video_id, {platform: url-or-error}, text). publish_at: YouTube publishes
+    it itself at that time (the others are posted when this is called)."""
     if not platforms:  # by default, only the enabled accounts that are actually connected
         platforms = [p for p in cfg["platforms"] if config.connected(p) or dry_run]
         if not platforms:
@@ -110,6 +111,8 @@ def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
             ready, cfg, note, boost_of, name=re.sub(r"^\d{10}-", "", Path(src).name))
     log.info("Caption written by %s", origin)
 
+    if publish_at:
+        text = {**text, "publish_at": publish_at}
     if dry_run:
         return None, {p: "dry-run (not uploaded)" for p in platforms}, text
 
@@ -129,7 +132,9 @@ def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
 def _uploads(name, src, ready, text, cfg):
     """The file(s) and text this platform gets."""
     if name == "youtube":
-        return [(path, _youtube_text(path, text[name])) for path in _youtube_files(src, ready, cfg)]
+        extra = {"publish_at": text["publish_at"]} if text.get("publish_at") else {}
+        return [(path, {**_youtube_text(path, text[name]), **extra})
+                for path in _youtube_files(src, ready, cfg)]
     if name == "instagram":
         return [(_instagram_file(ready, cfg), text[name])]
     return [(ready, text[name])]

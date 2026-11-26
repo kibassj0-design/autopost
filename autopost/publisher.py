@@ -239,18 +239,23 @@ class Publisher:
         try:
             if not path.exists():
                 raise RuntimeError("the video file is gone")
+            ahead = json.loads(row["result"]) if row["result"] else {}
+            ahead = {k: v for k, v in ahead.items() if str(v).startswith("http")}
             platforms = [p for p in json.loads(row["platforms"] or "[]")
-                         if config.connected(p)] or None
+                         if config.connected(p) and p not in ahead]
             self.cancel_flag.clear()
-            video_id, result, text = pipeline.publish(path, self.cfg, note=row["note"] or "",
-                                               platforms=platforms, db=self._db,
-                                               own_caption=row["caption"],
-                                               stop=self.cancel_flag.is_set)
+            if not platforms:  # everything was scheduled on the platforms themselves
+                video_id, result, text = None, {}, {}
+            else:
+                video_id, result, text = pipeline.publish(
+                    path, self.cfg, note=row["note"] or "", platforms=platforms, db=self._db,
+                    own_caption=row["caption"], stop=self.cancel_flag.is_set)
+            result = {**ahead, **result}
             self._tell(row["title"] or text.get("youtube", {}).get("title") or path.stem,
                        result)
-            if any(not str(r).startswith("FAILED") for r in result.values()):
+            if video_id and any(not str(r).startswith("FAILED") for r in result.values()):
                 self._plan_retries(video_id)
-            if all(str(r).startswith("FAILED") for r in result.values()):
+            if result and all(str(r).startswith("FAILED") for r in result.values()):
                 status = "failed"
         except pipeline.PublishCancelled:
             status, result = "cancelled", {}
@@ -261,6 +266,52 @@ class Publisher:
                          (status, json.dumps(result, ensure_ascii=False), row["id"]))
         self._db.commit()
         self.current = None
+
+    def _schedule_ahead(self):
+        """A scheduled post more than 20 minutes away goes up to YouTube now, set to be
+        published by YouTube itself at its time (so it goes out even with the computer
+        off). Instagram and TikTok offer no scheduling to apps: those are posted at the
+        time. One video per pass."""
+        if not config.connected("youtube"):
+            return
+        rows = self._db.execute(
+            "SELECT * FROM schedule WHERE status='pending' AND at>? ORDER BY at LIMIT 20",
+            (time.time() + 20 * 60,)).fetchall()
+        for row in rows:
+            if "youtube" not in json.loads(row["platforms"] or "[]"):
+                continue
+            done = json.loads(row["result"]) if row["result"] else {}
+            if "youtube" in done or "youtube_ahead" in done or not Path(row["path"]).exists():
+                continue
+            self.current = Path(row["path"]).name
+            try:
+                video_id, result, text = pipeline.publish(
+                    Path(row["path"]), self.cfg, note=row["note"] or "", platforms=["youtube"],
+                    db=self._db, own_caption=row["caption"], publish_at=row["at"])
+                url = str(result.get("youtube", ""))
+                if url.startswith("http"):
+                    self._db.execute("UPDATE posts SET published_at=? WHERE video_id=?",
+                                     (row["at"], video_id))
+                    log.info("Scheduled on YouTube for %s: %s",
+                             time.strftime("%Y-%m-%d %H:%M", time.localtime(row["at"])), url)
+                else:
+                    url = "FAILED_AHEAD"  # not again ahead; it goes out at the time instead
+                done["youtube"] = url
+                if url == "FAILED_AHEAD":
+                    done.pop("youtube")
+                    done["youtube_ahead"] = str(result.get("youtube", ""))[:200]
+                self._db.execute("UPDATE schedule SET result=? WHERE id=?",
+                                 (json.dumps(done, ensure_ascii=False), row["id"]))
+                self._db.commit()
+            except Exception as e:
+                log.warning("Scheduling on YouTube ahead failed: %s", e)
+                done["youtube_ahead"] = str(e)[:200]
+                self._db.execute("UPDATE schedule SET result=? WHERE id=?",
+                                 (json.dumps(done, ensure_ascii=False), row["id"]))
+                self._db.commit()
+            finally:
+                self.current = None
+            return  # one upload per pass
 
     def step(self):
         if self._db is None:  # SQLite connections belong to the thread that made them
@@ -315,6 +366,9 @@ class Publisher:
                 self.retries.append(due)
         if self.retries:
             self._retry(self.retries[0])
+
+        if accounts and not self.retries:
+            self._schedule_ahead()
 
         # Scheduled posts go out at their time, whatever the gap between queue posts
         # and even while the queue is paused: the user picked that time.

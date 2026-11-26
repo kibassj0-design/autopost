@@ -112,6 +112,13 @@ def publish(path, text, cfg):
         "status": {"privacyStatus": cfg["youtube_privacy"],
                    "selfDeclaredMadeForKids": False},
     }
+    if text.get("publish_at"):
+        # Scheduled on YouTube itself: uploaded now as private, YouTube makes it public at
+        # that time, whether or not this computer is on.
+        import datetime
+        at = datetime.datetime.fromtimestamp(float(text["publish_at"]), datetime.timezone.utc)
+        meta["status"].update(privacyStatus="private",
+                              publishAt=at.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
     init = check(requests.post(
         UPLOAD, params={"uploadType": "resumable", "part": "snippet,status"},
         headers={**headers, "X-Upload-Content-Type": "video/mp4",
