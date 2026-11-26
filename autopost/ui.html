@@ -144,6 +144,48 @@
   .vscore { font-size: 44px; font-weight: 800; line-height: 1; }
   img.cover { width: 54px; height: 96px; object-fit: cover; border-radius: 8px; flex: none; cursor: zoom-in;
               border: 1px solid var(--line); background: var(--panel2); }
+  /* ---- studio: dark with a red accent, like a creator analytics space */
+  #tab-studio { --s-red: #e5303f; --s-red2: #ff5468; --s-red-soft: rgba(229, 48, 63, .14); }
+  .s-nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+  .s-nav button { background: var(--panel); border: 1px solid var(--line); color: var(--muted); border-radius: 999px;
+                  padding: 8px 16px; font: inherit; cursor: pointer; transition: all .2s var(--ease); }
+  .s-nav button.on { background: var(--s-red); border-color: var(--s-red); color: #fff; box-shadow: 0 6px 20px var(--s-red-soft); }
+  .s-page { display: none; } .s-page.on { display: block; animation: fadeUp .35s var(--ease); }
+  .s-hero { position: relative; overflow: hidden; border-radius: 18px; padding: 22px; margin-bottom: 14px;
+            background: radial-gradient(120% 140% at 0% 0%, rgba(229,48,63,.28), transparent 55%), var(--panel);
+            border: 1px solid color-mix(in srgb, var(--s-red) 30%, var(--line)); }
+  .s-hero .kicker { font-size: 11px; letter-spacing: .18em; color: var(--s-red2); font-weight: 700; }
+  .s-hero h2 { font-size: 24px; margin: 6px 0 4px; }
+  .s-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .s-kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .s-kpi .lbl { font-size: 12px; color: var(--muted); }
+  .s-kpi .num { font-size: 30px; font-weight: 800; margin: 4px 0; letter-spacing: -.5px; }
+  .s-kpi .sub { font-size: 12px; color: var(--muted); }
+  .s-kpi .sub b { color: var(--s-red2); }
+  .s-big { display: inline-block; background: #1d4ed8; color: #fff; font-weight: 800; font-size: 26px; padding: 2px 10px; border-radius: 6px; }
+  .s-chart { width: 100%; height: 220px; display: block; direction: ltr; }
+  .s-seg { display: inline-flex; background: var(--panel2); border-radius: 10px; padding: 3px; gap: 3px; }
+  .s-seg button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 8px; cursor: pointer; }
+  .s-seg button.on { background: var(--s-red); color: #fff; }
+  .s-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .s-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .s-card img, .s-card .ph { width: 100%; aspect-ratio: 9/14; object-fit: cover; display: block; background: var(--panel2); }
+  .s-card .meta { padding: 8px 10px; font-size: 12px; }
+  .s-card .t { font-weight: 600; font-size: 12.5px; line-height: 1.35; max-height: 2.7em; overflow: hidden; }
+  .s-card .hot { color: var(--s-red2); font-weight: 700; }
+  .s-week { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .s-week .wk { color: var(--s-red2); font-size: 12px; font-weight: 700; }
+  .s-week h3 { margin: 4px 0; font-size: 17px; }
+  .s-week .theme { display: inline-block; background: var(--panel2); border-radius: 6px; padding: 2px 8px; font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .s-task { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-top: 1px dashed var(--line); font-size: 13.5px; cursor: pointer; }
+  .s-task input { margin-top: 3px; accent-color: var(--s-red); }
+  .s-task.done span { color: var(--muted); text-decoration: line-through; }
+  .s-console { background: #07090c; border: 1px solid #2a1215; border-radius: 14px; padding: 14px; font-family: ui-monospace, Consolas, monospace;
+               font-size: 12.5px; line-height: 1.7; max-height: 520px; overflow: auto; direction: rtl; }
+  .s-console .ln { white-space: pre-wrap; }
+  .s-console .tm { color: #6b7280; margin-inline-end: 8px; direction: ltr; unicode-bidi: isolate; }
+  .s-console .finding { color: #fca5a5; } .s-console .plan { color: #fde68a; } .s-console .task { color: #86efac; }
+  .s-console .idea { color: #93c5fd; } .s-console .miss { color: #fdba74; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
   .tile { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
   .tile .big { font-size: 22px; font-weight: 700; margin: 2px 0; }
@@ -252,6 +294,7 @@
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-6h4v6"/></symbol>
   <symbol id="i-cal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M8 3v4M16 3v4M3.5 10h17"/><path d="M12 13.5v3l2 1"/></symbol>
+  <symbol id="i-studio" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 15l3-3 3 2 4-5"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
   <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
@@ -268,6 +311,7 @@
   <nav id="nav">
     <button data-tab="home" class="active"><svg><use href="#i-home"/></svg><span class="lbl">الرئيسية</span><span class="count" id="c-jobs"></span></button>
     <button data-tab="schedule"><svg><use href="#i-cal"/></svg><span class="lbl">الجدولة</span><span class="count" id="c-sched"></span></button>
+    <button data-tab="studio"><svg><use href="#i-studio"/></svg><span class="lbl">محرك النمو</span></button>
     <button data-tab="posts"><svg><use href="#i-chart"/></svg><span class="lbl">المنشورات والتفاعل</span></button>
     <button data-tab="accounts"><svg><use href="#i-user"/></svg><span class="lbl">الحسابات</span></button>
     <button data-tab="settings"><svg><use href="#i-gear"/></svg><span class="lbl">الإعدادات</span></button>
@@ -366,6 +410,50 @@
     <div class="card">
       <div class="card-head"><h2>تم النشر</h2><span class="muted small" id="done-count"></span></div>
       <div id="sched-done"></div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-studio">
+    <div class="page-head"><div><h1>محرك النمو <span class="muted" style="font-size:15px">Growth Engine</span></h1><p>فريق محتوى كامل: يدرس جمهورك، ويعيد تصنيع ما نجح بطريقة جديدة، ويحلل ما لم ينجح، ويضع خطة إنتاج يعدّلها مع كل نتائج جديدة.</p></div>
+      <button class="btn sm" id="s-refresh">تحديث الأرقام</button></div>
+    <div class="s-nav" id="s-nav">
+      <button data-s="overview" class="on">نظرة عامة</button>
+      <button data-s="content">المحتوى</button>
+      <button data-s="plan">خطة النمو</button>
+      <button data-s="engine">محرك التحليل</button>
+    </div>
+
+    <div class="s-page on" id="s-overview">
+      <div class="s-kpis" id="s-kpis"></div>
+      <div class="card">
+        <div class="row" style="align-items:center;margin-bottom:8px">
+          <div class="grow"><h2 style="margin:0">نبض الأداء</h2><div class="muted small">كل مشاهدة تحكي جزءا من قصتك</div></div>
+          <div class="s-seg" id="s-metric"><button data-m="followers" class="on">المتابعون</button><button data-m="views">المشاهدات</button></div>
+        </div>
+        <div id="s-pulse-head" style="margin-bottom:6px"></div>
+        <svg class="s-chart" id="s-chart" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="muted small" id="s-chart-note"></div>
+      </div>
+    </div>
+
+    <div class="s-page" id="s-content">
+      <div class="card"><h2>محتواك</h2><p class="muted small" style="margin-top:-4px">آخر ما نُشر، ومقارنته بمتوسط حسابك (×2 = ضعف المعتاد).</p><div class="s-grid" id="s-grid"></div></div>
+    </div>
+
+    <div class="s-page" id="s-plan">
+      <div class="s-hero" id="s-hero"></div>
+      <div class="s-kpis" id="s-plan-kpis"></div>
+      <div class="grid2" id="s-weeks" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px"></div>
+      <div class="card" id="s-rules-card" style="margin-top:14px" hidden><h2>قواعد تعلّمها من حسابك</h2><ul id="s-rules" style="margin:0;padding-inline-start:18px"></ul></div>
+    </div>
+
+    <div class="s-page" id="s-engine">
+      <div class="card">
+        <div class="row" style="align-items:center;margin-bottom:8px"><h2 class="grow" style="margin:0">محرك التحليل</h2>
+          <button class="btn sm" id="s-revise">حلّل الآن وعدّل الخطة</button></div>
+        <p class="muted small" style="margin-top:0">يقرأ أرقام كل منشور ويحلل لماذا نجح أو لم ينجح، ثم يرجع ويعدّل الخطة. يعمل وحده كل أسبوع.</p>
+        <div class="s-console" id="s-console"></div>
+      </div>
     </div>
   </section>
 
@@ -799,6 +887,7 @@ function openTab(tab) {
   $$(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + tab));
   if (tab === "settings" || tab === "accounts") loadSettings();
   if (tab === "posts") loadInsights();
+  if (tab === "studio") loadStudio();
   store("tab", tab);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1442,6 +1531,114 @@ $("#ai-probe").addEventListener("click", async () => {
   catch (e) { toast(e.message, "bad"); }
   b.disabled = false; b.textContent = "افحص الحصص الآن";
 });
+
+// ---------------------------------------------------------------- studio
+let studio = null, sMetric = "followers";
+const PNAME = { instagram: "انستغرام", youtube: "يوتيوب", tiktok: "تيك توك" };
+const kfmt = n => n == null ? "—" : n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(2) + "K" : Math.round(n).toLocaleString("en");
+async function loadStudio(refresh) {
+  try { studio = await api("/api/studio", { refresh: !!refresh }); } catch (e) { toast(e.message, "bad"); return; }
+  renderStudio();
+}
+function sKpi(label, num, sub) { return el("div", { class: "s-kpi" }, [el("div", { class: "lbl", text: label }), el("div", { class: "num", text: num }), el("div", { class: "sub" }, sub || [])]); }
+function totalFollowers(ov) { const v = Object.values(ov.followers || {}); return v.length ? { now: v.reduce((a, x) => a + x.now, 0), delta: v.reduce((a, x) => a + x.delta14, 0) } : null; }
+function renderStudio() {
+  if (!studio) return;
+  const ov = studio.overview, f = totalFollowers(ov);
+  $("#s-kpis").replaceChildren(
+    sKpi("المشاهدات (30 يوما)", kfmt(ov.views), ov.top_platform ? ["المصدر الأبرز: ", el("b", { text: PNAME[ov.top_platform] || ov.top_platform })] : "تُقرأ كل ساعتين"),
+    sKpi("متوسط المشاهدات للمقطع", kfmt(ov.per_video), "من المقاطع المقاسة"),
+    sKpi("التفاعلات", kfmt(ov.interactions), ov.rate != null ? [el("b", { text: ov.rate + "%" }), " من إجمالي المشاهدات"] : ""),
+    sKpi("الوصول (28 يوما)", studio.audience && studio.audience.reach != null ? kfmt(studio.audience.reach) : "—",
+      studio.audience && studio.audience.non_follower_share != null ? [el("b", { text: studio.audience.non_follower_share + "%" }), " من غير المتابعين"]
+      : studio.audience && studio.audience.error === "permission" ? "يحتاج صلاحية instagram_manage_insights" : "من انستغرام"),
+    sKpi("الفيديوهات المنشورة", ov.videos + (ov.videos ? "+" : ""), "آخر 30 يوما"),
+    sKpi("المتابعون", f ? kfmt(f.now) : "—", f ? [el("b", { text: (f.delta >= 0 ? "+" : "") + kfmt(f.delta) }), " في أسبوعين"] : "يُقرأ كل 3 ساعات"));
+  drawPulse();
+  // content
+  $("#s-grid").replaceChildren(...(studio.content.length ? studio.content.map(v => el("div", { class: "s-card" }, [
+    v.thumb ? el("img", { src: "/media?name=" + encodeURIComponent(v.thumb) + "&in=thumbs&t=" + encodeURIComponent(TOKEN), alt: "" }) : el("div", { class: "ph" }),
+    el("div", { class: "meta" }, [
+      el("div", { class: "t", text: v.title || "مقطع" }),
+      el("div", { class: "muted", style: "margin-top:4px" }, ["▶ " + kfmt(v.views) + " · ♥ " + kfmt(v.likes) + " ",
+        v.vs_median ? el("span", { class: v.vs_median >= 1.5 ? "hot" : "", text: "×" + v.vs_median }) : null]),
+      el("div", { class: "row", style: "gap:4px;margin-top:6px" }, Object.entries(v.links).map(([p, u]) =>
+        el("a", { class: "badge", href: u, target: "_blank", rel: "noopener", text: PNAME[p] || p })))])]))
+    : [el("div", { class: "muted", text: "لم يُنشر شيء بعد." })]));
+  // plan
+  const pl = studio.plan;
+  if (!pl) {
+    $("#s-hero").replaceChildren(el("div", { class: "kicker", text: "YOUR CREATOR SPACE" }), el("h2", { text: "خطوة أقرب إلى النمو." }),
+      el("p", { class: "muted", text: "لا توجد خطة بعد. يكتبها الذكاء الاصطناعي من أرقام حسابك: هدف متابعين، وعدد مقاطع في الأسبوع، ومهام أسبوعية." }),
+      el("button", { class: "btn primary", text: "اصنع خطة النمو", onclick: () => makePlan(false) }));
+    $("#s-plan-kpis").replaceChildren(); $("#s-weeks").replaceChildren(); $("#s-rules-card").hidden = true;
+  } else {
+    const tasks = pl.weeks.flatMap(w => w.tasks), done = tasks.filter(t => t.done).length;
+    $("#s-hero").replaceChildren(el("div", { class: "kicker", text: "YOUR CREATOR SPACE · " + (pl.revision > 1 ? "المراجعة " + pl.revision : "الخطة الأولى") }),
+      el("h2", { text: pl.headline }), el("p", { class: "muted", style: "margin:0 0 10px", text: pl.summary }),
+      el("div", { class: "row", style: "gap:6px" }, [el("button", { class: "btn sm", text: "عدّل الخطة الآن حسب النتائج", onclick: () => makePlan(true) }),
+        el("span", { class: "muted small", style: "align-self:center", text: "كُتبت " + fromNow(pl.created, Date.now() / 1000) + " · تُراجع وحدها كل أسبوع" })]));
+    $("#s-plan-kpis").replaceChildren(
+      sKpi("ريلز / أسبوع", pl.reels_min + "–" + pl.reels_max, ""),
+      sKpi("الهدف", kfmt(pl.goal_followers), f ? "الآن " + kfmt(f.now) + " متابع" : "متابع"),
+      sKpi("المهام", done + " / " + tasks.length, "أُنجزت"));
+    $("#s-weeks").replaceChildren(...pl.weeks.map((w, wi) => el("div", { class: "s-week" }, [
+      el("div", { class: "wk", text: "الأسبوع " + ["الأول", "الثاني", "الثالث", "الرابع", "الخامس"][wi] }),
+      el("h3", { text: w.title }), el("span", { class: "theme", text: w.theme }),
+      ...w.tasks.map((t, ti) => { const box = el("input", { type: "checkbox" }); box.checked = !!t.done;
+        const row = el("label", { class: "s-task" + (t.done ? " done" : "") }, [box, el("span", { text: t.text })]);
+        box.addEventListener("change", async () => { try { await api("/api/studio/task", { week: wi, task: ti, done: box.checked }); loadStudio(); } catch (e) { toast(e.message, "bad"); } });
+        return row; })])));
+    const extra = [];
+    if ((pl.ideas || []).length) extra.push(el("div", { class: "s-week" }, [el("div", { class: "wk", text: "جدول الإنتاج القادم" }), el("h3", { text: "أفكار المقاطع القادمة" }),
+      ...pl.ideas.map(i => el("div", { class: "s-task", style: "cursor:default" }, [el("span", {}, [el("b", { text: i.title }), el("div", { class: "muted small", text: i.why + (i.based_on ? " · إعادة تصنيع: " + i.based_on : "") })])]))]));
+    if ((pl.misses || []).length) extra.push(el("div", { class: "s-week" }, [el("div", { class: "wk", text: "تحليل ما لم ينجح" }), el("h3", { text: "لماذا لم تنجح" }),
+      ...pl.misses.map(m => el("div", { class: "s-task", style: "cursor:default" }, [el("span", { text: m })]))]));
+    $("#s-weeks").append(...extra);
+    $("#s-rules-card").hidden = !(pl.rules || []).length;
+    $("#s-rules").replaceChildren(...(pl.rules || []).map(r => el("li", { text: r, style: "margin:4px 0" })));
+  }
+  // engine
+  const now = Date.now() / 1000;
+  $("#s-console").replaceChildren(...(studio.log.length ? studio.log.map(e => el("div", { class: "ln " + e.kind }, [
+    el("span", { class: "tm", text: new Date(e.at * 1000).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) }),
+    "> " + e.text])) : [el("div", { class: "ln", text: "> بانتظار أول تحليل. اضغط «حلّل الآن» أو اصنع خطة النمو." })]));
+}
+function drawPulse() {
+  const ov = studio.overview, svg = $("#s-chart");
+  let pts = [];
+  if (sMetric === "followers") {
+    const days = {};
+    for (const v of Object.values(ov.followers || {})) for (const [d, c] of v.series) days[d] = (days[d] || 0) + c;
+    pts = Object.entries(days).map(([d, c]) => [+d, c]).sort((a, b) => a[0] - b[0]);
+  } else pts = ov.views_series || [];
+  const f = totalFollowers(ov);
+  const last = pts.length ? pts[pts.length - 1][1] : null;
+  $("#s-pulse-head").replaceChildren(el("span", { class: "s-big", text: kfmt(sMetric === "followers" ? (f ? f.now : last) : last) }),
+    el("span", { class: "muted small", style: "margin-inline-start:8px", text: sMetric === "followers" ? "متابع على كل المنصات" : "مشاهدة متراكمة" }));
+  if (pts.length < 2) { svg.innerHTML = ""; $("#s-chart-note").textContent = "يحتاج قراءتين على الأقل؛ الأداة تسجل الأرقام كل بضع ساعات."; return; }
+  $("#s-chart-note").textContent = "آخر " + pts.length + " يوما";
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys) * 0.98, y1 = Math.max(...ys) * 1.02 || 1;
+  const X = x => 5 + ((x - x0) / ((x1 - x0) || 1)) * 590;  // time runs left to right, as charts read
+  const Y = y => 210 - ((y - y0) / ((y1 - y0) || 1)) * 195;
+  const line = pts.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1)).join(" ");
+  svg.innerHTML = '<defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e5303f" stop-opacity=".45"/><stop offset="1" stop-color="#e5303f" stop-opacity="0"/></linearGradient></defs>' +
+    '<path d="' + line + " L" + X(x1).toFixed(1) + " 220 L" + X(x0).toFixed(1) + ' 220 Z" fill="url(#sg)"/>' +
+    '<path d="' + line + '" fill="none" stroke="#ff4458" stroke-width="2.5" vector-effect="non-scaling-stroke"/>';
+}
+async function makePlan(revise) {
+  toast(revise ? "يحلل النتائج ويعدّل الخطة… (دقيقة تقريبا)" : "يكتب خطة النمو من أرقامك… (دقيقة تقريبا)", "ok");
+  try { await api("/api/studio/plan", { revise }); await loadStudio(); toast("الخطة جاهزة", "ok"); }
+  catch (e) { toast(e.message, "bad"); }
+}
+$("#s-nav").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
+  $$("#s-nav button").forEach(x => x.classList.toggle("on", x === b));
+  $$("#tab-studio .s-page").forEach(p => p.classList.toggle("on", p.id === "s-" + b.dataset.s)); });
+$("#s-metric").addEventListener("click", e => { const b = e.target.closest("button"); if (!b || !studio) return;
+  sMetric = b.dataset.m; $$("#s-metric button").forEach(x => x.classList.toggle("on", x === b)); drawPulse(); });
+$("#s-refresh").addEventListener("click", () => { toast("يقرأ الأرقام من المنصات…", "ok"); loadStudio(true); });
+$("#s-revise").addEventListener("click", () => makePlan(!!(studio && studio.plan)));
 
 // ---------------------------------------------------------------- insights
 const fmtNum = n => n == null ? "—" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "K" : n.toLocaleString("en");

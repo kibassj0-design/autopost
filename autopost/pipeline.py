@@ -126,6 +126,9 @@ def publish(src, cfg, note="", platforms=None, dry_run=False, db=None,
             log.info("Publishing cancelled before %s", name)
             raise PublishCancelled("cancelled")
         results[name] = _send(db, video_id, name, src, ready, text, cfg, stop)
+    if any(not str(r).startswith("FAILED") for r in results.values()):
+        from . import studio
+        studio.save_thumb(video_id, ready)  # for the studio's content grid
     return video_id, results, text
 
 

@@ -6,7 +6,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, momentum, notify, pipeline, store, timing
+from . import config, momentum, notify, pipeline, store, studio, timing
 from .platforms import instagram
 
 log = logging.getLogger("autopost")
@@ -385,6 +385,13 @@ class Publisher:
                 instagram.refresh_if_due(log)
             except Exception as e:
                 log.warning("Instagram token renewal: %s", type(e).__name__)
+
+        if accounts and time.time() - getattr(self, "_studio_at", 0) > 1800:
+            self._studio_at = time.time()
+            try:
+                studio.tick(cfg, self._db)  # followers, and the weekly plan revision
+            except Exception as e:
+                log.info("studio: %s", e)
 
         # The numbers of recent posts are read always (engagement, best hours);
         # momentum acts on them only when it is switched on.

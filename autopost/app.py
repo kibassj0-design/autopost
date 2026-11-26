@@ -16,7 +16,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import backup, checks, cleanup, config, llm, notify, store, timing, updater, video, virality
+from . import backup, checks, cleanup, config, llm, notify, store, studio, timing, updater, video, virality
 from .platforms import tiktok, youtube
 from .publisher import Publisher
 
@@ -756,7 +756,8 @@ def make_handler(app):
             self._send(200, html, "text/html; charset=utf-8")
 
         def _media(self, name, where="inbox"):
-            folder = app.schedule_dir() if where == "scheduled" else app.publisher.inbox
+            folder = (app.schedule_dir() if where == "scheduled" else
+                      config.DATA / "thumbs" if where == "thumbs" else app.publisher.inbox)
             path = folder / Path(name).name  # queued or scheduled videos only
             if not path.is_file():
                 return self._send(404, {"error": "not found"})
@@ -847,7 +848,8 @@ def make_handler(app):
             """The user's own cover picture for a queued or scheduled video."""
             name = Path(urllib.parse.unquote(self.headers.get("X-Name") or "")).name
             where = self.headers.get("X-In", "inbox")
-            folder = app.schedule_dir() if where == "scheduled" else app.publisher.inbox
+            folder = (app.schedule_dir() if where == "scheduled" else
+                      config.DATA / "thumbs" if where == "thumbs" else app.publisher.inbox)
             target = folder / name
             length = int(self.headers.get("Content-Length") or 0)
             if not name or not target.is_file():
@@ -998,6 +1000,26 @@ def make_handler(app):
                 freed = cleanup.run(urgent=bool(body.get("hard")))
                 return {"freed_gb": round(freed / 1024 ** 3, 2),
                         "free_gb": round((cleanup.free_bytes() or 0) / 1024 ** 3, 1)}
+            elif path == "/api/studio":
+                db = store.connect()
+                try:
+                    if body.get("refresh"):
+                        studio.record(app.cfg, db, force=True)
+                    return {"overview": studio.overview(db, int(body.get("days") or 30)),
+                            "content": studio.content(db), "plan": studio.plan(),
+                            "audience": studio.audience(),
+                            "log": studio.log_entries()}
+                finally:
+                    db.close()
+            elif path == "/api/studio/plan":
+                db = store.connect()
+                try:
+                    return studio.make_plan(app.cfg, db, revise=bool(body.get("revise")))
+                finally:
+                    db.close()
+            elif path == "/api/studio/task":
+                return studio.toggle_task(int(body["week"]), int(body["task"]),
+                                          bool(body.get("done")))
             elif path == "/api/insights":
                 db = store.connect()
                 try:

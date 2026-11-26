@@ -261,6 +261,12 @@ def _generate_pieces(path, cfg, note, boost_of, name, lang, landscape, meta):
         brief.append(f"Voice: {cfg['brand_voice']}")
     if note:
         brief.append(f"Notes about this clip: {note}")
+    try:
+        from . import studio
+        if studio.guidance():
+            brief.append(studio.guidance())
+    except Exception:
+        pass
     if boost_of:
         brief.append(f"This follows an earlier post that is taking off ({boost_of!r}): write "
                      "it as a continuation with a fresh hook, not a repeat.")

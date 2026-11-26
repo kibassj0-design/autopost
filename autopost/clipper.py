@@ -603,6 +603,13 @@ def _ask_moments(part, marks, meta, duration, c, cfg, where=""):
             "on their own, each scored honestly. A score under "
             f"{c['min_score']} will be dropped, so don't pad the list and don't leave a "
             "strong one out: a dull part may have none, a packed one many.")
+    try:
+        from . import studio
+        learned = studio.guidance()
+        if learned:
+            brief.append(learned + "\nPrefer moments that fit these, without lowering the bar.")
+    except Exception:
+        pass
     brief.append("Transcript:\n" + _transcript_text(part, marks))
     data, who = llm.ask_json(SYSTEM, "\n\n".join(brief), SCHEMA, cfg, effort="high")
     return data["clips"], who
