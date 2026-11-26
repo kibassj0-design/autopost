@@ -679,6 +679,21 @@
     </div>
 
     <div class="card">
+      <h2>Google Flow داخل Claude</h2>
+      <p class="muted small" style="margin-top:-4px">يضيف أداة Google Flow (صنع فيديوهات وصور برصيدك في Flow) إلى Claude Desktop وClaude Code على هذا الكمبيوتر. بعدها تطلب من Claude مثلا: «اصنع فيديو 9:16 لـ…».</p>
+      <div class="row" style="align-items:center">
+        <button class="btn primary" id="flow-add">ربط Google Flow بـ Claude</button>
+        <span class="muted small" id="flow-out"></span>
+      </div>
+      <ol class="steps" style="margin-top:10px">
+        <li>بعد الربط أغلق Claude Desktop تماما وافتحه من جديد.</li>
+        <li>اكتب لـ Claude: <b>شغّل flow_browser_login</b>، وسجّل الدخول بحساب Google في نافذة Chrome التي تُفتح (مرة واحدة فقط).</li>
+        <li>الفيديوهات تُحفظ في <b>التنزيلات ← google-flow</b>.</li>
+      </ol>
+      <p class="muted small">أداة غير رسمية: تشغّل موقع Flow بحسابك ورصيدك، وقد يخالف ذلك شروط Google. تُستعمل على مسؤوليتك.</p>
+    </div>
+
+    <div class="card">
       <h2>مساحة التخزين</h2>
       <p class="muted small" style="margin-top:-4px">الأداة تحذف وحدها ما لم تعد تحتاجه: نسخ المنصات بعد يومين، المقاطع المنشورة بعد 7 أيام، الفيديوهات المجدولة بعد 3 أيام من نشرها، وملفات العمل القديمة. وتحذف أسرع إذا قلّت المساحة. طابور النشر ومفاتيحك وحساباتك لا تُمس أبدا.</p>
       <div class="row" style="align-items:center">
@@ -1713,6 +1728,20 @@ $("#nt-tg").addEventListener("click", async () => {
 });
 window.addEventListener("load", notifyInfo);  // after the QR code library has loaded
 
+async function flowStatus() {
+  try {
+    const st = await api("/api/flow/status", {});
+    $("#flow-out").textContent = st.added.length ? "مربوط ✓ (أعد تشغيل Claude إذا لم يظهر)"
+      : !st.desktop_found && !st.claude_code ? "لم يُعثر على Claude Desktop على هذا الكمبيوتر" : "غير مربوط بعد";
+  } catch (e) {}
+}
+$("#flow-add").addEventListener("click", async () => {
+  const b = $("#flow-add"); b.disabled = true; $("#flow-out").textContent = "يثبّت… (قد يأخذ بضع دقائق أول مرة)";
+  try { const r = await api("/api/flow/install", {}); $("#flow-out").textContent = r.done.join(" · "); toast("رُبط Google Flow. أعد تشغيل Claude Desktop.", "ok"); }
+  catch (e) { $("#flow-out").textContent = ""; toast(e.message, "bad"); }
+  b.disabled = false;
+});
+flowStatus();
 $("#clean-now").addEventListener("click", async () => {
   const b = $("#clean-now"); b.disabled = true;
   try {

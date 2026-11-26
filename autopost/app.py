@@ -1020,6 +1020,12 @@ def make_handler(app):
             elif path == "/api/studio/task":
                 return studio.toggle_task(int(body["week"]), int(body["task"]),
                                           bool(body.get("done")))
+            elif path == "/api/flow/status":
+                from . import flowmcp
+                return flowmcp.status()
+            elif path == "/api/flow/install":
+                from . import flowmcp
+                return {"done": flowmcp.install(), **flowmcp.status()}
             elif path == "/api/insights":
                 db = store.connect()
                 try:
