@@ -29,6 +29,22 @@ def _table(db):
     db.execute(TABLE)
 
 
+SETTINGS_FILE = "studio_settings.json"
+DEFAULTS = {"platforms": ["youtube", "instagram"], "since": 0,
+            "exclude": ["GTA 6", "GTA", "جي تي اي"], "niche": ""}
+
+
+def settings():
+    return {**DEFAULTS, **_read(SETTINGS_FILE, {})}
+
+
+def save_settings(**changes):
+    s = settings()
+    s.update({k: v for k, v in changes.items() if k in DEFAULTS})
+    _write(SETTINGS_FILE, s)
+    return s
+
+
 # ---------------------------------------------------------------- followers
 
 def _instagram():
@@ -137,6 +153,8 @@ def followers(db, days=30):
     since = time.time() - days * 86400
     for row in db.execute("SELECT DISTINCT platform FROM followers").fetchall():
         p = row["platform"]
+        if p not in settings()["platforms"]:
+            continue
         rows = db.execute("SELECT ts, count, name, picture FROM followers WHERE platform=? "
                           "ORDER BY ts", (p,)).fetchall()
         if not rows:
@@ -156,6 +174,13 @@ def followers(db, days=30):
 # ---------------------------------------------------------------- numbers and content
 
 def _posts(db, days=30):
+    """Posts on the engine's platforms, since its fresh start if there was one."""
+    st = settings()
+    since = max(time.time() - days * 86400, float(st.get("since") or 0))
+    return [p for p in _all_posts(db, since) if p["platform"] in st["platforms"]]
+
+
+def _all_posts(db, since):
     return [dict(r) for r in db.execute(
         "SELECT p.id, p.platform, p.url, p.published_at, v.id video_id, v.title,"
         " (SELECT views FROM stats s WHERE s.post_id=p.id ORDER BY ts DESC LIMIT 1) views,"
@@ -164,7 +189,7 @@ def _posts(db, days=30):
         " (SELECT shares FROM stats s WHERE s.post_id=p.id ORDER BY ts DESC LIMIT 1) shares"
         " FROM posts p JOIN videos v ON v.id=p.video_id"
         " WHERE p.error IS NULL AND p.published_at >= ? ORDER BY p.published_at DESC",
-        (time.time() - days * 86400,))]
+        (since,))]
 
 
 def overview(db, days=30):
@@ -180,9 +205,12 @@ def overview(db, days=30):
     # the views pulse: views gathered per day by the posts (from the snapshots)
     pulse = {}
     for r in db.execute(
-            "SELECT s.post_id, s.ts, s.views FROM stats s JOIN posts p ON p.id=s.post_id "
-            "WHERE s.ts >= ? AND s.views IS NOT NULL ORDER BY s.ts",
-            (time.time() - days * 86400,)).fetchall():
+            "SELECT s.post_id, s.ts, s.views, p.platform, p.published_at FROM stats s "
+            "JOIN posts p ON p.id=s.post_id WHERE s.ts >= ? AND s.views IS NOT NULL "
+            "ORDER BY s.ts", (time.time() - days * 86400,)).fetchall():
+        if r["platform"] not in settings()["platforms"] or \
+                r["published_at"] < float(settings().get("since") or 0):
+            continue
         day = int(r["ts"] // 86400) * 86400
         pulse.setdefault(day, {})[r["post_id"]] = r["views"]
     running, series = {}, []
@@ -304,16 +332,76 @@ When revising, say what changed and why based on the results. Write everything i
 Standard Arabic (names of games, streamers and platforms as usually written)."""
 
 
+NICHE_SCHEMA = {"type": "object", "properties": {"niches": {"type": "array", "items": {
+    "type": "object", "properties": {
+        "name": {"type": "string"}, "why": {"type": "string"},
+        "audience": {"type": "string"}, "sources": {"type": "string"},
+        "first_videos": {"type": "array", "items": {"type": "string"}},
+        "difficulty": {"type": "string"}},
+    "required": ["name", "why", "audience", "sources", "first_videos", "difficulty"]}}},
+    "required": ["niches"]}
+
+NICHE_SYSTEM = """You advise an Arabic-speaking creator (Iraq) who is starting a new account \
+from zero on YouTube Shorts and Instagram Reels. Their tool makes short clips from long \
+videos and live streams (YouTube, Twitch) with Arabic/English captions, and can also post \
+their own videos and AI-made videos. Propose 6 content directions (niches) for 2026 that \
+can grow fast from zero for an Arabic audience, that this tool can feed every day, and \
+that are allowed to monetise. For each: the niche name, why it can grow now, the audience, \
+where the clips come from (kinds of channels/streams/sources, or own/AI-made), 3 concrete \
+first videos, and how hard it is (سهل/متوسط/صعب). Avoid every excluded topic completely. \
+Avoid content that copies others without adding value (add translation, commentary, \
+context). Write in Modern Standard Arabic."""
+
+
+def niches(cfg):
+    st = settings()
+    brief = "Excluded topics (never suggest anything about them): " + \
+        (", ".join(st["exclude"]) or "none")
+    data, _ = llm.ask_json(NICHE_SYSTEM, brief, NICHE_SCHEMA, cfg, effort="high",
+                           max_tokens=8000)
+    return data["niches"]
+
+
+def start_fresh(cfg, db, niche, exclude):
+    """Start the engine from zero on a new niche: past posts no longer count, the old
+    plan and log go, and a plan is written for the new direction."""
+    save_settings(since=time.time(), niche=niche.strip(),
+                  exclude=[x.strip() for x in exclude if x.strip()])
+    for name in (PLAN_FILE, LOG_FILE):
+        try:
+            (config.DATA / name).unlink()
+        except OSError:
+            pass
+    note(f"بداية جديدة من الصفر: {niche}", "plan")
+    config.save_config(cfg, {"niche": niche.strip()})
+    return make_plan(cfg, db)
+
+
 def plan():
     return _read(PLAN_FILE, None)
 
 
 def _context(cfg, db, previous=None):
+    st = settings()
+    head = [f"Platforms: {', '.join(st['platforms'])} only (plan for these, nothing else).",
+            "Excluded topics (never plan, suggest or mention them): "
+            + (", ".join(st["exclude"]) or "none")]
+    if st.get("niche"):
+        head.append(f"The account's content direction: {st['niche']}")
+    if st.get("since"):
+        head.append("The account restarted from zero on this direction on "
+                    + time.strftime("%Y-%m-%d", time.localtime(st["since"]))
+                    + ": earlier posts do not count. With few posts so far, plan how to "
+                    "start well: the first videos, formats to test, posting rhythm.")
+    return "\n".join(head) + "\n" + _context_numbers(cfg, db, previous)
+
+
+def _context_numbers(cfg, db, previous=None):
     ov = overview(db, 30)
     posts = content(db, 30)[:40]
     fol = {p: {"now": v["now"], "change_14_days": v["delta14"],
                "series": v["series"][-30:]} for p, v in ov["followers"].items()}
-    lines = [f"Niche: {cfg.get('niche') or 'gaming/streaming clips'}",
+    lines = [f"Niche: {settings().get('niche') or cfg.get('niche') or 'not chosen yet'}",
              f"Followers: {json.dumps(fol)}",
              f"Last 30 days: {ov['videos']} videos, {ov['views']} views, "
              f"{ov['interactions']} interactions ({ov['rate']}% of views), top platform "

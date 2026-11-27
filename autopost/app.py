@@ -1007,7 +1007,7 @@ def make_handler(app):
                         studio.record(app.cfg, db, force=True)
                     return {"overview": studio.overview(db, int(body.get("days") or 30)),
                             "content": studio.content(db), "plan": studio.plan(),
-                            "audience": studio.audience(),
+                            "audience": studio.audience(), "settings": studio.settings(),
                             "log": studio.log_entries()}
                 finally:
                     db.close()
@@ -1015,6 +1015,18 @@ def make_handler(app):
                 db = store.connect()
                 try:
                     return studio.make_plan(app.cfg, db, revise=bool(body.get("revise")))
+                finally:
+                    db.close()
+            elif path == "/api/studio/niches":
+                return {"niches": studio.niches(app.cfg)}
+            elif path == "/api/studio/settings":
+                return studio.save_settings(**{k: body[k] for k in ("platforms", "exclude")
+                                               if k in body})
+            elif path == "/api/studio/start":
+                db = store.connect()
+                try:
+                    return studio.start_fresh(app.cfg, db, str(body.get("niche", "")),
+                                              list(body.get("exclude") or []))
                 finally:
                     db.close()
             elif path == "/api/studio/task":

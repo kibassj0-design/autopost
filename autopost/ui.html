@@ -441,6 +441,22 @@
     </div>
 
     <div class="s-page" id="s-plan">
+      <div class="card" id="s-fresh">
+        <div class="row" style="align-items:center"><h2 class="grow" style="margin:0">ابدأ من الصفر بمحتوى جديد</h2>
+          <span class="muted small" id="s-niche-now"></span></div>
+        <p class="muted small">يقترح الذكاء الاصطناعي مجالات محتوى تنمو بسرعة لجمهور عربي على يوتيوب وانستغرام، وتقدر الأداة تغذيها كل يوم. تختار واحدا، فيبدأ المحرك من الصفر: المنشورات القديمة لا تُحسب، وتُكتب خطة جديدة لهذا المجال.</p>
+        <div class="row">
+          <div class="field grow"><label>مواضيع لا تريدها أبدا (افصل بفاصلة)</label><input id="s-exclude" placeholder="GTA 6، جي تي اي"></div>
+          <div class="field small"><label>&nbsp;</label><button class="btn primary" id="s-suggest">اقترح علي مجالات</button></div>
+        </div>
+        <div class="row" style="gap:12px;align-items:center;margin:4px 0 8px">
+          <span class="muted small">المحرك يعمل على:</span>
+          <label class="small"><input type="checkbox" class="s-plat" value="youtube"> يوتيوب</label>
+          <label class="small"><input type="checkbox" class="s-plat" value="instagram"> انستغرام</label>
+          <label class="small"><input type="checkbox" class="s-plat" value="tiktok"> تيك توك</label>
+        </div>
+        <div id="s-niches" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px"></div>
+      </div>
       <div class="s-hero" id="s-hero"></div>
       <div class="s-kpis" id="s-plan-kpis"></div>
       <div class="grid2" id="s-weeks" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px"></div>
@@ -1580,6 +1596,11 @@ function renderStudio() {
       el("div", { class: "row", style: "gap:4px;margin-top:6px" }, Object.entries(v.links).map(([p, u]) =>
         el("a", { class: "badge", href: u, target: "_blank", rel: "noopener", text: PNAME[p] || p })))])]))
     : [el("div", { class: "muted", text: "لم يُنشر شيء بعد." })]));
+  // engine settings
+  const st = studio.settings || {};
+  $$(".s-plat").forEach(x => { x.checked = (st.platforms || []).includes(x.value); });
+  if (document.activeElement !== $("#s-exclude")) $("#s-exclude").value = (st.exclude || []).join("، ");
+  $("#s-niche-now").textContent = st.niche ? "المجال الحالي: " + st.niche.split(" — ")[0] : "";
   // plan
   const pl = studio.plan;
   if (!pl) {
@@ -1654,6 +1675,33 @@ $("#s-metric").addEventListener("click", e => { const b = e.target.closest("butt
   sMetric = b.dataset.m; $$("#s-metric button").forEach(x => x.classList.toggle("on", x === b)); drawPulse(); });
 $("#s-refresh").addEventListener("click", () => { toast("يقرأ الأرقام من المنصات…", "ok"); loadStudio(true); });
 $("#s-revise").addEventListener("click", () => makePlan(!!(studio && studio.plan)));
+function excluded() { return $("#s-exclude").value.split(/[,،]/).map(x => x.trim()).filter(Boolean); }
+$("#s-exclude").addEventListener("change", () => api("/api/studio/settings", { exclude: excluded() }).catch(() => {}));
+$$(".s-plat").forEach(b => b.addEventListener("change", async () => {
+  const platforms = $$(".s-plat").filter(x => x.checked).map(x => x.value);
+  if (!platforms.length) { b.checked = true; return; }
+  try { await api("/api/studio/settings", { platforms }); loadStudio(); } catch (e) { toast(e.message, "bad"); }
+}));
+$("#s-suggest").addEventListener("click", async () => {
+  const b = $("#s-suggest"); b.disabled = true;
+  $("#s-niches").replaceChildren(el("div", { class: "muted", text: "يبحث عن مجالات تناسبك… (دقيقة تقريبا)" }));
+  try {
+    await api("/api/studio/settings", { exclude: excluded() });
+    const { niches } = await api("/api/studio/niches", {});
+    $("#s-niches").replaceChildren(...niches.map(n => el("div", { class: "s-week" }, [
+      el("div", { class: "wk", text: n.difficulty }), el("h3", { text: n.name }),
+      el("p", { class: "small", style: "margin:4px 0", text: n.why }),
+      el("div", { class: "muted small", text: "الجمهور: " + n.audience }),
+      el("div", { class: "muted small", style: "margin-bottom:6px", text: "من أين المقاطع: " + n.sources }),
+      ...n.first_videos.map(v => el("div", { class: "s-task", style: "cursor:default" }, [el("span", { text: "▶ " + v })])),
+      el("button", { class: "btn primary sm", style: "margin-top:8px", text: "ابدأ من الصفر بهذا المجال", onclick: async () => {
+        if (!confirm("البدء من الصفر بمجال «" + n.name + "»؟ الخطة والتحليل القديمان يُحذفان، والمنشورات السابقة لا تُحسب في المحرك (لا تُحذف من المنصات).")) return;
+        toast("يكتب خطة البداية… (دقيقة تقريبا)", "ok");
+        try { await api("/api/studio/start", { niche: n.name + " — " + n.why, exclude: excluded() }); $("#s-niches").replaceChildren(); await loadStudio(); toast("بدأ المحرك من الصفر بمجال: " + n.name, "ok"); }
+        catch (e) { toast(e.message, "bad"); } } })])));
+  } catch (e) { $("#s-niches").replaceChildren(); toast(e.message, "bad"); }
+  b.disabled = false;
+});
 
 // ---------------------------------------------------------------- insights
 const fmtNum = n => n == null ? "—" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "K" : n.toLocaleString("en");
