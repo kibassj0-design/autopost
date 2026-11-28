@@ -425,6 +425,80 @@ class App:
         db.commit()
         db.close()
 
+    # ---- series of episodes
+
+    EP = re.compile(r"(?:الحلقة|حلقة|الحلقه|ep(?:isode)?|e|part|جزء)\s*[-_.# ]*(\d{1,3})", re.I)
+
+    @classmethod
+    def episode_number(cls, name):
+        m = cls.EP.search(name)
+        if m:
+            return int(m.group(1))
+        nums = re.findall(r"(?<![\d])(\d{1,3})(?![\d])", Path(name).stem)
+        return int(nums[-1]) if nums else None
+
+    @staticmethod
+    def series_name(title):
+        t = re.sub(r"^\d{10,}-", "", title or "")
+        t = re.split(r"\s*[-–|]\s*(?:الحلقة|حلقة|الحلقه|ep|episode|part)|\s+(?:الحلقة|حلقة)\s*\d", t,
+                     flags=re.I)[0]
+        return t.strip(" -–_") or t
+
+    def series_list(self):
+        """Series with episodes waiting in the schedule: name, count, first and last time."""
+        groups = {}
+        for r in self.schedule_list():
+            if r["status"] != "pending":
+                continue
+            g = groups.setdefault(self.series_name(r["title"] or r["name"]), [])
+            g.append(r["at"])
+        return [{"name": k, "count": len(v), "first": min(v), "last": max(v)}
+                for k, v in groups.items() if len(v) >= 1]
+
+    def schedule_series(self, items, clock, start=None, pair_with="", skip=(), every_days=1,
+                        caption_template="", platforms=None):
+        """Schedule many episodes: one per day (or every N days) at `clock` (HH:MM), from
+        `start` (YYYY-MM-DD), or on the same days as the episodes of `pair_with`, in
+        episode order, leaving out the numbers in `skip`. Returns what was scheduled."""
+        import datetime
+        hh, mm = (int(x) for x in clock.split(":"))
+        eps = []
+        for it in items:
+            n = self.episode_number(it.get("original") or it["file"])
+            if n is not None and n in set(int(x) for x in skip):
+                (self.schedule_dir() / Path(it["file"]).name).unlink(missing_ok=True)
+                continue
+            eps.append((n if n is not None else 10 ** 6, it))
+        eps.sort(key=lambda e: e[0])
+        if not eps:
+            raise ValueError("لا توجد حلقات للجدولة بعد الاستثناء.")
+        days = []
+        if pair_with:
+            days = sorted({datetime.date.fromtimestamp(r["at"]) for r in self.schedule_list()
+                           if r["status"] == "pending"
+                           and self.series_name(r["title"] or r["name"]) == pair_with})
+        if not days:
+            first = datetime.date.fromisoformat(start) if start else datetime.date.today()
+            days = [first]
+        while len(days) < len(eps):
+            days.append(days[-1] + datetime.timedelta(days=int(every_days or 1)))
+        total = max([n for n, _ in eps if n < 10 ** 6] or [len(eps)])
+        done = []
+        for (n, it), day in zip(eps, days):
+            when = datetime.datetime(day.year, day.month, day.day, hh, mm)
+            if when.timestamp() < time.time():
+                when += datetime.timedelta(days=1)  # never in the past
+            original = Path(it.get("original") or it["file"]).stem
+            title = re.sub(r"^\d{10,}-", "", original)
+            title = re.sub(r"\s*[(_]\s*للنشر\s*[)_]", "", title).strip()  # "(for posting)"
+            caption = (caption_template or "").replace("{n}", str(n if n < 10 ** 6 else "")) \
+                .replace("{total}", str(total)).replace("{series}", self.series_name(title)) \
+                .replace("{title}", title)
+            self.schedule_add(it["file"], when.timestamp(), caption, platforms, title=title)
+            done.append({"title": title, "at": when.timestamp()})
+        log.info("Scheduled %d episode(s) of %s", len(done), self.series_name(done[0]["title"]))
+        return done
+
     def schedule_from_queue(self, name, at, caption=""):
         """Move a queued clip (with its note and YouTube copy) out of the queue to its time."""
         src = self.publisher.inbox / Path(name).name
@@ -911,6 +985,14 @@ def make_handler(app):
                 if not pub.current:
                     raise ValueError("لا يوجد نشر جارٍ الآن.")
                 pub.cancel_flag.set()
+            elif path == "/api/schedule/series":
+                return {"scheduled": app.schedule_series(
+                    body["items"], body.get("clock") or "22:00", body.get("start") or None,
+                    body.get("pair_with") or "", body.get("skip") or [],
+                    int(body.get("every_days") or 1), body.get("caption") or "",
+                    body.get("platforms"))}
+            elif path == "/api/schedule/series-list":
+                return {"series": app.series_list()}
             elif path == "/api/schedule/add":
                 app.schedule_add(body["file"], body["at"], body.get("caption", ""),
                                  body.get("platforms"))

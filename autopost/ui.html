@@ -404,6 +404,25 @@
       <div class="row"><button class="btn primary" id="s-add" disabled><svg><use href="#i-cal"/></svg>جدولة</button></div>
     </div>
     <div class="card">
+      <h2>جدولة سلسلة حلقات</h2>
+      <p class="muted small" style="margin-top:-4px">اختر كل ملفات السلسلة مرة واحدة: ترتّبها الأداة حسب رقم الحلقة في اسم الملف، وتنشر حلقة كل يوم في الساعة التي تختارها. ويمكن أن تنزل في نفس أيام سلسلة أخرى مجدولة (مثلا ميراج الساعة 8 وزوايا الساعة 10).</p>
+      <input type="file" id="ser-files" accept="video/*" multiple>
+      <div class="muted small" id="ser-picked" style="margin:6px 0"></div>
+      <div class="row">
+        <div class="field small"><label for="ser-clock">الساعة</label><input type="time" id="ser-clock" value="22:00"></div>
+        <div class="field"><label for="ser-pair">بنفس أيام سلسلة</label><select id="ser-pair"><option value="">لا، من تاريخ أختاره</option></select></div>
+        <div class="field small"><label for="ser-start">من تاريخ</label><input type="date" id="ser-start"></div>
+        <div class="field small"><label for="ser-skip">استثنِ الحلقات</label><input id="ser-skip" placeholder="مثل: 9" dir="ltr"></div>
+      </div>
+      <div class="field"><label>المنصات</label><div class="row" id="ser-platforms" style="gap:4px;padding-top:6px"></div></div>
+      <div class="field"><label for="ser-caption">الكابشن (اختياري)</label>
+        <textarea id="ser-caption" placeholder="فارغ = يكتبه الذكاء الاصطناعي لكل حلقة. أو اكتب قالبا: {series} - الحلقة {n} من {total} ثم الهاشتاغات"></textarea></div>
+      <div class="bar" id="ser-bar" hidden><i></i></div>
+      <div class="row"><button class="btn primary" id="ser-go"><svg><use href="#i-cal"/></svg>جدولة السلسلة</button></div>
+      <div id="ser-out" class="muted small"></div>
+    </div>
+
+    <div class="card">
       <div class="card-head"><h2>قيد النشر والمجدولة</h2><span class="muted small" id="sched-count"></span></div>
       <div id="sched"></div>
     </div>
@@ -919,6 +938,7 @@ function openTab(tab) {
   if (tab === "settings" || tab === "accounts") loadSettings();
   if (tab === "posts") loadInsights();
   if (tab === "studio") loadStudio();
+  if (tab === "schedule") seriesList();
   store("tab", tab);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1262,6 +1282,51 @@ function platformBoxes(box, chosen) {
   }));
 }
 const chosenPlatforms = box => $$("input:checked", box).map(i => i.value);
+
+// ---------------------------------------------------------------- series of episodes
+function epNumber(name) {
+  const m = name.match(/(?:الحلقة|حلقة|الحلقه|ep(?:isode)?|e|part|جزء)\s*[-_.# ]*(\d{1,3})/i);
+  if (m) return +m[1];
+  const all = name.replace(/\.[^.]+$/, "").match(/\d{1,3}/g);
+  return all ? +all[all.length - 1] : 9999;
+}
+$("#ser-files").addEventListener("change", () => {
+  const fs = [...$("#ser-files").files].sort((a, b) => epNumber(a.name) - epNumber(b.name));
+  $("#ser-picked").textContent = fs.length ? fs.length + " حلقة: " + fs.map(f => epNumber(f.name) === 9999 ? f.name : "#" + epNumber(f.name)).join("، ") : "";
+});
+async function seriesList() {
+  try {
+    const { series } = await api("/api/schedule/series-list", {});
+    const sel = $("#ser-pair"), cur = sel.value;
+    sel.replaceChildren(el("option", { value: "", text: "لا، من تاريخ أختاره" }),
+      ...series.map(x => el("option", { value: x.name, text: x.name + " (" + x.count + " حلقة مجدولة)" })));
+    sel.value = cur;
+  } catch (e) {}
+}
+$("#ser-go").addEventListener("click", async () => {
+  const fs = [...$("#ser-files").files];
+  if (!fs.length) return toast("اختر ملفات الحلقات أولا.", "bad");
+  const platforms = chosenPlatforms($("#ser-platforms"));
+  if (!platforms.length) return toast("اختر منصة واحدة على الأقل.", "bad");
+  const skip = $("#ser-skip").value.split(/[ ,،]+/).map(x => parseInt(x)).filter(x => !isNaN(x));
+  const todo = fs.filter(f => !skip.includes(epNumber(f.name)));
+  const btn = $("#ser-go"), bar = $("#ser-bar"); btn.disabled = true; bar.hidden = false;
+  try {
+    const items = [];
+    for (let i = 0; i < todo.length; i++) {
+      $("#ser-out").textContent = "يرفع " + (i + 1) + " من " + todo.length + ": " + todo[i].name;
+      const { file } = await upload(todo[i], f => { bar.firstChild.style.width = Math.round(((i + f) / todo.length) * 100) + "%"; });
+      items.push({ file, original: todo[i].name });
+    }
+    const r = await api("/api/schedule/series", { items, clock: $("#ser-clock").value || "22:00", start: $("#ser-start").value,
+      pair_with: $("#ser-pair").value, skip, caption: $("#ser-caption").value, platforms });
+    $("#ser-out").textContent = "جُدولت " + r.scheduled.length + " حلقة: " + r.scheduled.map(x => x.title.replace(/\s*\(.*?\)/, "") + " ← " + fmtWhen(x.at)).join(" · ");
+    toast("جُدولت السلسلة", "ok");
+    $("#ser-files").value = ""; $("#ser-picked").textContent = "";
+    refresh(); seriesList();
+  } catch (e) { toast(e.message, "bad"); $("#ser-out").textContent = ""; }
+  btn.disabled = false; setTimeout(() => { bar.hidden = true; bar.firstChild.style.width = "0"; }, 600);
+});
 
 let pickedFile = null;
 function pickFile(f) {
@@ -1866,7 +1931,7 @@ $("#upd-check").addEventListener("click", async () => {
 
 // ---------------------------------------------------------------- start
 $("#s-at").value = defaultTime();
-refresh().then(() => { platformBoxes($("#s-platforms")); });
+refresh().then(() => { platformBoxes($("#s-platforms")); platformBoxes($("#ser-platforms")); seriesList(); });
 const lastTab = store("tab");
 if (lastTab && $("#tab-" + lastTab)) openTab(lastTab);
 setInterval(refresh, 1500);
